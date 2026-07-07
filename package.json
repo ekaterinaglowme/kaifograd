@@ -5,6 +5,12 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
+    "test:unit": "node --test tests/game.test.js tests/client-source.test.js",
+    "test:integration": "node --test tests/integration.test.js",
+    "test:browser": "node --test tests/browser.test.js",
     "start": "node server.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1"
   }
 }

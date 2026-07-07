@@ -205,6 +205,38 @@ h1 {
   box-shadow: 0 8px 20px rgba(255, 177, 58, 0.22);
 }
 
+.option.runaway-option {
+  position: relative;
+  z-index: 2;
+  transform: translate(var(--runaway-x, 0), var(--runaway-y, 0));
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease;
+  will-change: transform;
+}
+
+.option.runaway-locked {
+  background: var(--orange);
+  box-shadow: 0 10px 26px rgba(255, 177, 58, 0.25);
+}
+
+.option.runaway-catchable {
+  background: var(--accent-2);
+}
+
+.runaway-badge {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  margin-left: 8px;
+  place-items: center;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 900;
+}
+
 .rounds-strip {
   display: flex;
   align-items: center;
@@ -480,6 +512,16 @@ code {
   gap: 14px;
 }
 
+.team-notice {
+  margin: 0;
+  padding: 12px 14px;
+  border: 2px solid rgba(243, 165, 200, 0.7);
+  border-radius: 18px;
+  color: var(--text);
+  background: rgba(191, 225, 0, 0.35);
+  font-weight: 800;
+}
+
 .team-play {
   display: grid;
   max-width: 1180px;
@@ -553,6 +595,15 @@ code {
   border-color: var(--text);
   color: var(--text);
   box-shadow: inset 0 0 0 3px #fff;
+}
+
+.options .option.runaway-locked {
+  background: var(--orange);
+  box-shadow: 0 10px 26px rgba(255, 177, 58, 0.25);
+}
+
+.options .option.runaway-catchable {
+  background: var(--accent-2);
 }
 
 .input {
@@ -731,6 +782,62 @@ button:disabled {
   text-align: center;
 }
 
+.final-actions {
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.final-congrats {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.95fr) minmax(360px, 1fr);
+  gap: clamp(20px, 4vw, 64px);
+  align-items: center;
+  min-height: calc(100vh - 190px);
+  overflow: hidden;
+  text-align: left;
+}
+
+.final-congrats-copy {
+  display: grid;
+  gap: clamp(14px, 2vw, 24px);
+  min-width: 0;
+  justify-items: start;
+}
+
+.final-congrats h2 {
+  margin: 0;
+  font-size: clamp(44px, 6.4vw, 98px);
+  line-height: 0.95;
+}
+
+.final-congrats-cat {
+  width: min(48vw, 680px);
+  max-height: min(68vh, 620px);
+  justify-self: end;
+  object-fit: contain;
+  filter: drop-shadow(0 18px 34px rgba(32, 32, 37, 0.14));
+}
+
+.congrats-image {
+  display: grid;
+  width: min(620px, 100%);
+  min-height: 220px;
+  place-items: center;
+  padding: 28px;
+  border: 2px solid var(--line);
+  border-radius: 42px;
+  color: var(--text);
+  background:
+    radial-gradient(circle at 18% 28%, rgba(191, 225, 0, 0.9), transparent 32%),
+    radial-gradient(circle at 82% 22%, rgba(244, 109, 175, 0.85), transparent 32%),
+    var(--lavender);
+  font-size: clamp(34px, 4.6vw, 70px);
+  font-weight: 950;
+  line-height: 0.95;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
 @media (max-width: 1100px) {
   .grid,
   .grid.three {
@@ -743,6 +850,22 @@ button:disabled {
 
   .team-question-panel .question {
     min-height: 540px;
+  }
+
+  .final-congrats {
+    grid-template-columns: 1fr;
+    min-height: auto;
+    text-align: center;
+  }
+
+  .final-congrats-copy {
+    justify-items: center;
+  }
+
+  .final-congrats-cat {
+    width: min(70vw, 520px);
+    max-height: 42vh;
+    justify-self: center;
   }
 }
 
@@ -809,6 +932,27 @@ button:disabled {
   background: rgba(244, 109, 175, 0.05);
 }
 
+.manual-winner {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 18px;
+  border: 2px solid rgba(243, 165, 200, 0.7);
+  border-radius: 24px;
+  background: rgba(191, 225, 0, 0.18);
+}
+
+.manual-winner h3 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.manual-winner-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  gap: 12px;
+}
+
 .question-image {
   width: 100%;
   max-height: 300px;
@@ -837,6 +981,30 @@ button:disabled {
   align-items: center;
 }
 
+.question-split.film-question,
+.projector-question.question-split.film-question {
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.65fr);
+}
+
+.film-question .question-body-side h2,
+.projector-question.film-question .projector-prompt {
+  font-size: clamp(24px, 3vw, 52px);
+  line-height: 1.02;
+}
+
+.projector-question.film-question .projector-round-title {
+  font-size: clamp(24px, 2.4vw, 42px);
+}
+
+.projector-question.film-question .projector-meta {
+  font-size: clamp(18px, 1.6vw, 28px);
+}
+
+.film-question .question-media-side .question-image,
+.film-question .question-media-side .question-image.placeholder {
+  min-height: clamp(360px, 56vh, 680px);
+}
+
 .question-split .question-media-side .question-image,
 .question-split .question-media-side .question-image.placeholder {
   margin-top: 0;
@@ -849,8 +1017,48 @@ button:disabled {
   min-width: 0;
 }
 
+.film-review {
+  display: grid;
+  gap: 16px;
+  text-align: center;
+}
+
+.film-review-image {
+  width: 100%;
+  max-height: min(68vh, 720px);
+  border-radius: 28px;
+  object-fit: contain;
+  background: rgba(191, 150, 254, 0.12);
+}
+
+.film-review-title {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+}
+
+.film-review-title span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.film-review-title h2 {
+  margin: 0;
+  font-size: clamp(38px, 7vw, 96px);
+  line-height: 0.95;
+}
+
+.projector-review .film-review-image {
+  max-height: min(72vh, 780px);
+}
+
 @media (max-width: 720px) {
   .question-split {
+    grid-template-columns: 1fr;
+  }
+  .question-split.film-question,
+  .projector-question.question-split.film-question,
+  .manual-winner-row {
     grid-template-columns: 1fr;
   }
   .question-split .question-media-side .question-image,

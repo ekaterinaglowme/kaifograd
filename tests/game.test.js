@@ -15,6 +15,9 @@ import {
   recountQuestion,
   adjustScore,
   serializeForViewer,
+  TEAM_PINS,
+  teamIdForPin,
+  updateTeamSetup,
 } from "../src/game.js";
 import { fullRounds } from "../src/rounds.js";
 
@@ -31,6 +34,14 @@ test("team slots work before real names are known", () => {
   assert.equal(game.teams[0].displayName, "Команда 1");
 });
 
+test("team pins identify fixed team slots", () => {
+  assert.equal(TEAM_PINS[1], "101");
+  assert.equal(TEAM_PINS[6], "106");
+  assert.equal(teamIdForPin("101"), 1);
+  assert.equal(teamIdForPin(" 106 "), 6);
+  assert.equal(teamIdForPin("999"), null);
+});
+
 test("unclaimed team default colors do not block captain color choice", () => {
   const game = createGame({ teamCount: 3 });
 
@@ -40,16 +51,32 @@ test("unclaimed team default colors do not block captain color choice", () => {
   assert.equal(game.teams[0].displayName, "Розовые");
 });
 
-test("registered teams can start the current round without host action", () => {
+test("registered teams stay in lobby until the host starts the game", () => {
   const game = createGame({ teamCount: 2 });
   const now = new Date("2026-07-06T20:00:00.000Z").getTime();
   registerTeam(game, 1, { name: "Без ожидания", color: "#FF5FA2", captain: "Катя" });
 
   const status = ensureCurrentRoundStarted(game, { now });
 
-  assert.equal(status, "round_running");
-  assert.equal(game.status, "round_running");
-  assert.equal(game.questionStartedAt, now);
+  assert.equal(status, "lobby");
+  assert.equal(game.status, "lobby");
+  assert.equal(game.questionStartedAt, null);
+});
+
+test("captain can update team setup only before the game starts", () => {
+  const game = createGame({ teamCount: 2 });
+  registerTeam(game, 1, { name: "Старое имя", color: "#4CC9F0", captain: "Команда" });
+
+  updateTeamSetup(game, 1, { name: "Новое имя", color: "#FF5FA2", captain: "Команда" });
+
+  assert.equal(game.teams[0].displayName, "Новое имя");
+  assert.equal(game.teams[0].color, "#FF5FA2");
+
+  startRound(game);
+  assert.throws(
+    () => updateTeamSetup(game, 1, { name: "Поздно", color: "#FFE45C", captain: "Команда" }),
+    /до начала игры/,
+  );
 });
 
 test("auto-start does not restart a running round", () => {
@@ -198,11 +225,25 @@ test("question duration falls back to the game default when the round has none",
   assert.equal(getQuestionDurationMs(game), game.questionDurationMs);
 });
 
-test("answer windows: разминка 20 секунд, остальные автораунды 45", () => {
+test("answer windows match the event timing plan", () => {
   assert.equal(fullRounds[0].durationMs, 20000, "Разминка");
-  for (const round of fullRounds.slice(1).filter((item) => !item.manual)) {
-    assert.equal(round.durationMs, 45000, round.title);
+  for (const i of [1, 2, 4, 5, 7]) {
+    assert.equal(fullRounds[i].durationMs, 45000, fullRounds[i].title);
   }
+  assert.equal(fullRounds[6].durationMs, 30000, "Угадай песню");
+  assert.equal(fullRounds[3].durationMs, 60000, "Мячи: 60 сек на попытку");
+  assert.equal(fullRounds[3].manual, true, "Мячи — ручной раунд (теперь раунд 4)");
+});
+
+test("round 4 is the manual island round and round 8 is history bug", () => {
+  assert.equal(fullRounds[3].title, "Кайфуй и работай");
+  assert.equal(fullRounds[3].manual, true);
+  assert.equal(fullRounds[7].title, "Баг в истории");
+});
+
+test("warmup second question marks one runaway option", () => {
+  assert.equal(fullRounds[0].questions[1].runawayOption, "D");
+  assert.equal(fullRounds[0].questions[1].runawayDelayMs, 7000);
 });
 
 test("recount rolls back a choice question so it can be scored again", () => {

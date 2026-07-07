@@ -4,17 +4,17 @@ import { readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import {
   createGame,
-  registerTeam,
   submitAnswer,
   scoreCurrentQuestion,
   startRound,
-  ensureCurrentRoundStarted,
-  advanceAfterQuestionScore,
   closeRound,
   recountQuestion,
   adjustScore,
+  awardManualRoundWinnerByPin,
   getQuestionDurationMs,
   serializeForViewer,
+  teamIdForPin,
+  updateTeamSetup,
 } from "./src/game.js";
 import { fullRounds } from "./src/rounds.js";
 
@@ -22,9 +22,20 @@ const root = process.cwd();
 const port = Number(process.env.PORT || 4173);
 const hostCode = process.env.HOST_CODE || "0306";
 const teamSlots = Math.max(2, Math.min(10, Number(process.env.TEAMS) || 6));
-const questionResultPauseMs = 2500;
 const finalStepMs = 800;
-const stateFile = join(root, "game-state.json");
+const roundStepMs = 800;
+const stateFile = process.env.STATE_FILE || join(root, "game-state.json");
+
+function createManualAttemptState(durationMs = 60000) {
+  return {
+    status: "idle",
+    teamId: null,
+    startedAt: 0,
+    durationMs,
+    remainingMs: durationMs,
+    attemptNumber: 0,
+  };
+}
 
 const types = {
   ".html": "text/html; charset=utf-8",
@@ -44,8 +55,13 @@ function createFreshGame() {
   game.finalReveal = "hidden";
   game.finalCountdown = 3;
   game.finalRevealAt = 0;
+  game.roundCountdown = 3;
+  game.roundCountdownAt = 0;
   game.paused = false;
   game.pausedRemainingMs = null;
+  game.currentReviewIndex = 0;
+  game.manualWinnerTeamId = null;
+  game.manualAttempt = createManualAttemptState();
   return game;
 }
 
@@ -62,8 +78,15 @@ async function loadGame() {
     parsed.finalReveal ||= "hidden";
     parsed.finalCountdown ??= 3;
     parsed.finalRevealAt ??= 0;
+    parsed.roundCountdown ??= 3;
+    parsed.roundCountdownAt ??= 0;
     parsed.paused ??= false;
     parsed.pausedRemainingMs ??= null;
+    parsed.currentReviewIndex ??= 0;
+    parsed.manualWinnerTeamId ??= null;
+    parsed.manualAttempt ||= createManualAttemptState(parsed.rounds?.[parsed.currentRoundIndex]?.durationMs || 60000);
+    parsed.manualAttempt.durationMs ||= parsed.rounds?.[parsed.currentRoundIndex]?.durationMs || 60000;
+    parsed.manualAttempt.remainingMs ??= parsed.manualAttempt.durationMs;
     for (const team of parsed.teams) team.token ||= "";
     return parsed;
   } catch {
@@ -114,17 +137,151 @@ function questionTimeLeftMs() {
   return Math.max(0, duration - (Date.now() - game.questionStartedAt));
 }
 
+function resetQuestionClock() {
+  game.questionResultUntil = null;
+  game.paused = false;
+  game.pausedRemainingMs = null;
+}
+
+function hasClosedCurrentRound() {
+  return game.roundResults.some((result) => result.roundIndex === game.currentRoundIndex);
+}
+
+function finishCurrentRound() {
+  if (game.status === "round_running" && !isManualRound()) scoreCurrentQuestion(game);
+  if (!hasClosedCurrentRound()) closeRound(game);
+  game.status = "round_countdown";
+  game.roundCountdown = 3;
+  game.roundCountdownAt = Date.now();
+  game.questionStartedAt = null;
+  resetQuestionClock();
+  game.manualAttempt = createManualAttemptState(getQuestionDurationMs(game));
+}
+
+function showRoundResults() {
+  if (game.status === "round_running" && !isManualRound()) scoreCurrentQuestion(game);
+  if (!hasClosedCurrentRound()) closeRound(game);
+  game.status = "round_countdown";
+  game.roundCountdown = 3;
+  game.roundCountdownAt = Date.now();
+  game.questionStartedAt = null;
+  resetQuestionClock();
+  return { ok: true };
+}
+
+function hideRoundResults() {
+  if (game.status !== "round_results") return { error: "Итоги сейчас не показаны" };
+  game.status = "round_over";
+  game.roundCountdown = 3;
+  game.roundCountdownAt = 0;
+  return { ok: true };
+}
+
+function moveToNextQuestionOrRoundOver() {
+  if (isManualRound()) return { error: "В ручном раунде нет следующего вопроса" };
+  if (game.status === "lobby") return { error: "Игра ещё не началась" };
+  if (game.status === "round_review") {
+    const reviewLength = game.rounds[game.currentRoundIndex]?.questions?.length || 0;
+    if (game.currentReviewIndex < reviewLength - 1) {
+      game.currentReviewIndex += 1;
+      return { ok: true };
+    }
+    game.status = "round_over";
+    game.currentReviewIndex = 0;
+    return { ok: true };
+  }
+  if (game.status === "round_running") scoreCurrentQuestion(game);
+
+  const round = game.rounds[game.currentRoundIndex];
+  const isLastQuestion = game.currentQuestionIndex >= round.questions.length - 1;
+  if (isLastQuestion) {
+    game.status = round.answerReview ? "round_review" : "round_over";
+    game.currentReviewIndex = 0;
+    game.questionStartedAt = null;
+    resetQuestionClock();
+    return { ok: true };
+  }
+
+  game.currentQuestionIndex += 1;
+  game.status = "round_running";
+  game.questionStartedAt = Date.now();
+  resetQuestionClock();
+  return { ok: true };
+}
+
+function manualAttemptDurationMs() {
+  return game.rounds[game.currentRoundIndex]?.durationMs || 60000;
+}
+
+function manualAttemptTimeLeftMs() {
+  const attempt = game.manualAttempt || createManualAttemptState(manualAttemptDurationMs());
+  if (attempt.status === "paused" || attempt.status === "finished" || attempt.status === "idle") {
+    return attempt.remainingMs ?? attempt.durationMs ?? manualAttemptDurationMs();
+  }
+  return Math.max(0, attempt.durationMs - (Date.now() - attempt.startedAt));
+}
+
+function startManualAttempt(teamId) {
+  if (!isManualRound()) return { error: "Это действие доступно только в ручном раунде" };
+  const team = game.teams.find((item) => item.id === Number(teamId) && item.ready);
+  if (!team) return { error: "Сначала выберите команду в игре" };
+  const durationMs = manualAttemptDurationMs();
+  game.manualAttempt = {
+    status: "running",
+    teamId: team.id,
+    startedAt: Date.now(),
+    durationMs,
+    remainingMs: durationMs,
+    attemptNumber: (game.manualAttempt?.attemptNumber || 0) + 1,
+  };
+  return { ok: true };
+}
+
+function finishManualAttempt() {
+  if (!isManualRound()) return { error: "Это действие доступно только в ручном раунде" };
+  const attempt = game.manualAttempt || createManualAttemptState(manualAttemptDurationMs());
+  game.manualAttempt = {
+    ...attempt,
+    status: "finished",
+    remainingMs: 0,
+  };
+  return { ok: true };
+}
+
+function toggleManualAttemptPause() {
+  if (!isManualRound()) return { error: "Это действие доступно только в ручном раунде" };
+  const attempt = game.manualAttempt || createManualAttemptState(manualAttemptDurationMs());
+  if (attempt.status === "running") {
+    game.manualAttempt = { ...attempt, status: "paused", remainingMs: manualAttemptTimeLeftMs() };
+  } else if (attempt.status === "paused") {
+    game.manualAttempt = {
+      ...attempt,
+      status: "running",
+      startedAt: Date.now() - (attempt.durationMs - (attempt.remainingMs ?? attempt.durationMs)),
+    };
+  }
+  return { ok: true };
+}
+
 function handleAction(action) {
   const type = action?.type;
   const isHost = action?.code === hostCode;
 
+  if (type === "loginTeam") {
+    const teamId = teamIdForPin(action.pin);
+    if (!teamId || teamId > game.teams.length) return { error: "Неверный PIN команды" };
+    const team = game.teams.find((item) => item.id === teamId);
+    team.token ||= randomUUID();
+    team.online = true;
+    return { ok: true, teamId: team.id, token: team.token };
+  }
+
   if (type === "join") {
     const team = game.teams.find((item) => item.id === Number(action.teamId));
     if (!team) return { error: "Нет такой команды" };
-    if (team.ready) return { error: "Команда уже занята" };
+    if (!team.token || team.token !== action.token) return { error: "Сначала войдите по PIN команды" };
     try {
-      registerTeam(game, team.id, { name: action.name, color: action.color, captain: action.captain || "Команда" });
-      team.token = randomUUID();
+      updateTeamSetup(game, team.id, { name: action.name, color: action.color, captain: action.captain || "Команда" });
       // Игру запускает ведущая кнопкой «Начать игру» — авто-старт отключён.
     } catch (error) {
       return { error: error.message };
@@ -136,6 +293,7 @@ function handleAction(action) {
     if (game.status !== "round_running" || isManualRound()) return { error: "Сейчас нельзя отвечать" };
     const team = game.teams.find((item) => item.id === Number(action.teamId));
     if (!team) return { error: "Нет такой команды" };
+    if (!team.ready) return { error: "Сначала сохраните название команды" };
     if (team.token && team.token !== action.token) return { error: "Эта команда уже занята на другом устройстве" };
     submitAnswer(game, team.id, action.value);
     return { ok: true };
@@ -146,35 +304,55 @@ function handleAction(action) {
   switch (type) {
     case "startRound":
       startRound(game);
+      resetQuestionClock();
+      game.manualAttempt = createManualAttemptState(manualAttemptDurationMs());
       break;
     case "scoreNow":
       scoreCurrentQuestion(game);
       game.status = "question_scored";
-      game.questionResultUntil = Date.now() + questionResultPauseMs;
+      game.questionResultUntil = null;
+      game.paused = false;
+      game.pausedRemainingMs = null;
       break;
+    case "nextQuestion": {
+      const result = moveToNextQuestionOrRoundOver();
+      if (result.error) return result;
+      break;
+    }
     case "recount":
       recountQuestion(game);
       scoreCurrentQuestion(game);
       game.status = "question_scored";
-      game.questionResultUntil = Date.now() + questionResultPauseMs;
+      game.questionResultUntil = null;
       break;
     case "adjustScore":
       adjustScore(game, Number(action.teamId), Number(action.delta));
       break;
+    case "awardManualWinnerByPin": {
+      try {
+        awardManualRoundWinnerByPin(game, action.pin);
+      } catch (error) {
+        return { error: error.message };
+      }
+      break;
+    }
     case "nextRound":
       game.currentRoundIndex = Math.min(game.rounds.length - 1, game.currentRoundIndex + 1);
       startRound(game);
+      resetQuestionClock();
+      game.manualAttempt = createManualAttemptState(manualAttemptDurationMs());
       break;
     case "closeManualRound":
-      closeRound(game);
-      game.status = "round_results";
+      finishCurrentRound();
       break;
     case "finishRound":
-      closeRound(game);
-      game.status = "round_results";
-      game.paused = false;
-      game.pausedRemainingMs = null;
+      showRoundResults();
       break;
+    case "hideRoundResults": {
+      const result = hideRoundResults();
+      if (result.error) return result;
+      break;
+    }
     case "togglePause":
       if (game.paused) {
         game.paused = false;
@@ -187,9 +365,29 @@ function handleAction(action) {
         game.paused = true;
       }
       break;
+    case "startManualAttempt": {
+      const result = startManualAttempt(action.teamId);
+      if (result.error) return result;
+      break;
+    }
+    case "finishManualAttempt": {
+      const result = finishManualAttempt();
+      if (result.error) return result;
+      break;
+    }
+    case "toggleManualAttemptPause": {
+      const result = toggleManualAttemptPause();
+      if (result.error) return result;
+      break;
+    }
     case "finalReveal":
       game.finalReveal = "countdown";
       game.finalCountdown = 3;
+      game.finalRevealAt = Date.now();
+      break;
+    case "showFinalCongrats":
+      game.finalReveal = "congrats";
+      game.finalCountdown = 0;
       game.finalRevealAt = Date.now();
       break;
     case "reset":
@@ -204,28 +402,28 @@ function handleAction(action) {
 // Серверный тик: таймер вопроса, автопереходы, финальный отсчёт.
 setInterval(() => {
   let changed = false;
-  if (game.finalReveal === "countdown") {
+  if (game.status === "round_countdown") {
+    if (Date.now() - game.roundCountdownAt >= roundStepMs) {
+      game.roundCountdown -= 1;
+      game.roundCountdownAt = Date.now();
+      if (game.roundCountdown <= 0) game.status = "round_results";
+      changed = true;
+    }
+  } else if (game.finalReveal === "countdown") {
     if (Date.now() - game.finalRevealAt >= finalStepMs) {
       game.finalCountdown -= 1;
       game.finalRevealAt = Date.now();
       if (game.finalCountdown <= 0) game.finalReveal = "podium";
       changed = true;
     }
-  } else if (!isManualRound() && !game.paused) {
-    if (game.status === "round_running" && game.questionStartedAt && questionTimeLeftMs() <= 0) {
-      scoreCurrentQuestion(game);
-      game.status = "question_scored";
-      game.questionResultUntil = Date.now() + questionResultPauseMs;
+  } else if (isManualRound()) {
+    if (game.manualAttempt?.status === "running" && manualAttemptTimeLeftMs() <= 0) {
+      finishManualAttempt();
       changed = true;
-    } else if (game.status === "question_scored" && game.questionResultUntil && Date.now() >= game.questionResultUntil) {
-      const round = game.rounds[game.currentRoundIndex];
-      const isLastQuestion = game.currentQuestionIndex >= round.questions.length - 1;
-      if (isLastQuestion) {
-        // Раунд закончился — ждём, пока ведущая нажмёт «Завершить раунд».
-        game.status = "round_over";
-      } else {
-        advanceAfterQuestionScore(game);
-      }
+    }
+  } else if (!game.paused) {
+    if (game.status === "round_running" && game.questionStartedAt && questionTimeLeftMs() <= 0) {
+      moveToNextQuestionOrRoundOver();
       changed = true;
     }
   }
@@ -318,5 +516,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, () => {
-  console.log(`Кайфоград сервер: http://localhost:${port}`);
+  const address = server.address();
+  const actualPort = typeof address === "object" && address ? address.port : port;
+  console.log(`Кайфоград сервер: http://localhost:${actualPort}`);
 });

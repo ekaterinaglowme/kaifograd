@@ -25,25 +25,25 @@ test("client exposes Miro as the third shared tab", async () => {
   assert.ok(miroTabIndex > teamTabIndex);
 });
 
-test("client exposes projector as the fourth shared tab", async () => {
+test("client exposes observer as the fourth shared tab", async () => {
   const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 
   const miroTabIndex = source.indexOf('tab("city", "Miro")');
-  const projectorTabIndex = source.indexOf('tab("screen", "Проектор")');
+  const projectorTabIndex = source.indexOf('tab("screen", "Наблюдающий")');
 
   assert.ok(projectorTabIndex > miroTabIndex);
 });
 
-test("projector screen contains only quiz content, not admin results", async () => {
+test("observer screen contains quiz and reveal content, not host controls", async () => {
   const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
   const renderScreenStart = source.indexOf("function renderScreen()");
   const renderScreenEnd = source.indexOf("function renderFinalReveal", renderScreenStart);
   const renderScreenSource = source.slice(renderScreenStart, renderScreenEnd);
 
   assert.ok(renderScreenStart >= 0);
-  assert.doesNotMatch(renderScreenSource, /Рейтинг/);
-  assert.doesNotMatch(renderScreenSource, /renderBarChart/);
-  assert.doesNotMatch(renderScreenSource, /renderRoundResults/);
+  assert.match(renderScreenSource, /renderRoundResults/);
+  assert.doesNotMatch(renderScreenSource, /renderScoreEditor/);
+  assert.doesNotMatch(renderScreenSource, /data-action="adjust-score"/);
 });
 
 test("captain client no longer shows a waiting-for-host-start screen", async () => {
@@ -96,7 +96,7 @@ test("team client has a locked occupied-team state", async () => {
   const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 
   assert.match(source, /renderTeamLocked/);
-  assert.match(source, /Команда уже занята/);
+  assert.match(source, /Нужен PIN команды/);
   assert.match(source, /game\.viewer\?\.teamAccess === false/);
 });
 
@@ -108,4 +108,96 @@ test("team setup marks taken colors and host destructive actions ask for confirm
   assert.match(source, /disabled/);
   assert.match(source, /confirmDangerousAction/);
   assert.match(styles, /\.color-button\.taken/);
+});
+
+test("team client logs in by captain pin instead of choosing a team number", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+
+  assert.match(source, /renderTeamPinGate/);
+  assert.match(source, /data-field="team-pin"/);
+  assert.match(source, /type: "loginTeam"/);
+  assert.doesNotMatch(source, /data-field="team-select"/);
+});
+
+test("team setup can be resaved in lobby after pin login", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+
+  assert.match(source, /action === "save-team-setup"/);
+  assert.match(source, /token: currentTeamToken\(\)/);
+  assert.match(source, /game\.status === "lobby"/);
+});
+
+test("host panel is a full control desk without Miro shortcut", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const hostStart = source.indexOf("function renderHost()");
+  const hostEnd = source.indexOf("function renderTeam()", hostStart);
+  const hostSource = source.slice(hostStart, hostEnd);
+
+  assert.ok(hostStart >= 0);
+  assert.match(hostSource, /data-action="start-round"/);
+  assert.match(hostSource, /data-action="score-now"/);
+  assert.match(hostSource, /data-action="next-question"/);
+  assert.match(hostSource, /data-action="toggle-pause"/);
+  assert.match(hostSource, /data-action="finish-round"/);
+  assert.match(hostSource, /data-action="recount"/);
+  assert.match(hostSource, /data-action="toggle-score-editor"/);
+  assert.doesNotMatch(hostSource, /Открыть Miro/);
+});
+
+test("manual round has repeatable 60 second attempts for teams", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+
+  assert.match(source, /start-manual-attempt/);
+  assert.match(source, /finish-manual-attempt/);
+  assert.match(source, /toggle-manual-attempt-pause/);
+  assert.match(source, /manualAttempt/);
+  assert.match(source, /60 сек/);
+});
+
+test("host controls round results reveal with a 3-2-1 countdown", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const server = await readFile(new URL("../server.js", import.meta.url), "utf8");
+
+  assert.match(source, /hide-round-results/);
+  assert.match(source, /renderRoundCountdown/);
+  assert.match(server, /round_countdown/);
+  assert.match(server, /showRoundResults/);
+  assert.doesNotMatch(server, /questionResultPauseMs = 2500/);
+});
+
+test("client supports film answer review, manual winner PIN, and final congrats", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+
+  assert.match(source, /renderFilmAnswerReview/);
+  assert.match(source, /currentReviewQuestion/);
+  assert.match(source, /data-field="manual-winner-pin"/);
+  assert.match(source, /awardManualWinnerByPin/);
+  assert.match(source, /renderFinalCongrats/);
+  assert.match(styles, /\.film-review-image/);
+  assert.match(styles, /\.final-congrats/);
+});
+
+test("warmup runaway answer is implemented without external UI dependency", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const pkg = await readFile(new URL("../package.json", import.meta.url), "utf8");
+
+  assert.match(source, /runaway-option/);
+  assert.match(source, /data-runaway-answer/);
+  assert.match(source, /function moveRunawayButton/);
+  assert.doesNotMatch(pkg, /runaway|hover-effect/i);
+});
+
+test("live timer updates do not rerender answer inputs while typing", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const intervalStart = source.lastIndexOf("setInterval(");
+  const intervalEnd = source.indexOf("connectEvents()", intervalStart);
+  const intervalSource = source.slice(intervalStart, intervalEnd);
+
+  assert.ok(intervalStart >= 0);
+  assert.match(source, /function updateLiveTimers/);
+  assert.match(source, /data-live="team-status"/);
+  assert.match(source, /data-live="projector-timer"/);
+  assert.match(intervalSource, /updateLiveTimers\(\)/);
+  assert.doesNotMatch(intervalSource, /game\.status === "round_running"[\s\S]*render\(\)/);
 });

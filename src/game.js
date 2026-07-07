@@ -11,6 +11,15 @@ export const TEAM_COLORS = [
   "#C9B8E8",
 ];
 
+export const TEAM_PINS = Object.freeze({
+  1: "101",
+  2: "102",
+  3: "103",
+  4: "104",
+  5: "105",
+  6: "106",
+});
+
 export const QUESTION_DURATION_MS = 45000;
 
 export const ROUNDS = [
@@ -101,6 +110,12 @@ function teamById(game, teamId) {
   return team;
 }
 
+export function teamIdForPin(pin) {
+  const normalized = String(pin ?? "").trim();
+  const entry = Object.entries(TEAM_PINS).find(([, value]) => value === normalized);
+  return entry ? Number(entry[0]) : null;
+}
+
 export function createGame({ teamCount = 2 } = {}) {
   const count = Math.max(2, Math.min(10, teamCount));
   return {
@@ -108,6 +123,7 @@ export function createGame({ teamCount = 2 } = {}) {
     status: "lobby",
     currentRoundIndex: 0,
     currentQuestionIndex: 0,
+    currentReviewIndex: 0,
     questionStartedAt: null,
     questionDurationMs: QUESTION_DURATION_MS,
     questionResultUntil: null,
@@ -130,12 +146,15 @@ export function createGame({ teamCount = 2 } = {}) {
     questionScores: {},
     roundResults: [],
     cityResources: [],
+    manualWinnerTeamId: null,
   };
 }
 
 export function startRound(game, { now = Date.now() } = {}) {
   game.status = "round_running";
   game.currentQuestionIndex = 0;
+  game.currentReviewIndex = 0;
+  game.manualWinnerTeamId = null;
   game.questionStartedAt = now;
   game.questionResultUntil = null;
   for (const team of game.teams) team.roundScore = 0;
@@ -143,10 +162,9 @@ export function startRound(game, { now = Date.now() } = {}) {
 }
 
 export function ensureCurrentRoundStarted(game, { now = Date.now() } = {}) {
+  void now;
   if (game.status !== "lobby") return game.status;
-  if (!game.teams.some((team) => team.ready)) return game.status;
-  if (game.rounds[game.currentRoundIndex]?.manual) return game.status;
-  return startRound(game, { now });
+  return game.status;
 }
 
 export function registerTeam(game, teamId, { name = "", color, captain = "" } = {}) {
@@ -160,6 +178,11 @@ export function registerTeam(game, teamId, { name = "", color, captain = "" } = 
   team.ready = true;
   team.online = true;
   return team;
+}
+
+export function updateTeamSetup(game, teamId, { name = "", color, captain = "" } = {}) {
+  if (game.status !== "lobby") throw new Error("Название команды можно менять только до начала игры");
+  return registerTeam(game, teamId, { name, color, captain });
 }
 
 export function submitAnswer(game, teamId, value) {
@@ -279,6 +302,26 @@ export function adjustScore(game, teamId, delta) {
   team.roundScore = Math.max(0, team.roundScore + delta);
   team.totalScore = Math.max(0, team.totalScore + delta);
   return team;
+}
+
+export function awardManualRoundWinnerByPin(game, pin) {
+  const round = game.rounds[game.currentRoundIndex];
+  if (!round?.manual) throw new Error("Это действие доступно только в ручном раунде");
+  const teamId = teamIdForPin(pin);
+  if (!teamId) throw new Error("Неверный PIN команды");
+  const winner = teamById(game, teamId);
+  if (!winner.ready) throw new Error("Команда ещё не сохранила название");
+
+  if (game.manualWinnerTeamId) {
+    const previous = teamById(game, game.manualWinnerTeamId);
+    previous.roundScore = Math.max(0, previous.roundScore - 1);
+    previous.totalScore = Math.max(0, previous.totalScore - 1);
+  }
+
+  winner.roundScore += 1;
+  winner.totalScore += 1;
+  game.manualWinnerTeamId = winner.id;
+  return winner;
 }
 
 export function closeRound(game) {
