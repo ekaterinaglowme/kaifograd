@@ -1,0 +1,110 @@
+name: CI/CD
+
+# Конвенция и креды — как в petbank (mybestpetfinancialproject): та же VM, тот же
+# deploy-ключ (secret SSH_KEY), те же vars SSH_HOST/SSH_USER. Образ в ghcr.io
+# приватный; на VM он тянется логином эфемерным GITHUB_TOKEN (packages: read).
+# На PR — тесты и сборка образа без публикации. Деплой — только push в main.
+# Отличие от petbank: запуск через docker compose (свой compose со стека
+# kate-stack), а не docker run — ради obs-сети, лимитов логов и памяти.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Tests
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # tests/browser.test.js гоняет Playwright/chromium — ставим devDeps и браузер.
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+
+  docker:
+    name: Build Docker image
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name != 'pull_request' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to VM
+    needs: [docker]
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    concurrency: deploy-kaifograd
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "${{ vars.SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Copy compose to VM
+        run: |
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}" 'mkdir -p ~/kaifograd'
+          scp -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            deploy/docker-compose.yml \
+            "${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}:~/kaifograd/docker-compose.yml"
+
+      - name: Pull image on VM and (re)start
+        run: |
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes \
+            "${{ vars.SSH_USER }}@${{ vars.SSH_HOST }}" \
+            "echo '${{ secrets.GITHUB_TOKEN }}' | docker login ghcr.io -u '${{ github.actor }}' --password-stdin \
+             && cd ~/kaifograd \
+             && docker compose pull \
+             && docker compose up -d \
+             && docker image prune -f \
+             && docker logout ghcr.io \
+             && sleep 3 \
+             && curl -fsS http://127.0.0.1:4173/ >/dev/null"
