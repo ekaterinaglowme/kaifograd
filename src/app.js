@@ -170,12 +170,14 @@ function readyTeams() {
 
 function questionTimeLeftMs() {
   if (!game) return 0;
+  if (game.paused) return game.pausedRemainingMs ?? 0;
   const duration = getQuestionDurationMs(game);
   if (!game.questionStartedAt || game.status !== "round_running") return duration;
   return Math.max(0, duration - (Date.now() - game.questionStartedAt));
 }
 
 function questionTimeLabel() {
+  if (game?.paused) return "пауза";
   return `${Math.ceil(questionTimeLeftMs() / 1000)} сек`;
 }
 
@@ -202,7 +204,7 @@ function pointsLabel(value) {
 
 function render() {
   // Не пересобираем DOM (и не перезагружаем встроенную карту Miro), пока открыта её вкладка.
-  if (game && state.view === "city" && state.miroLoaded && document.querySelector(".miro-embed")) return;
+  if (game && state.view === "city" && document.querySelector(".miro-embed")) return;
   syncUrl();
   const app = document.querySelector("#app");
   app.innerHTML = html`
@@ -302,15 +304,11 @@ function renderHost() {
           ${renderQuestionInputPreview()}
         </div>
         <div class="actions">
-          ${game.status === "round_running" ? `<button class="btn secondary" data-action="score-now">Закрыть вопрос</button>` : `<button class="btn" data-action="start-round">Запустить раунд</button>`}
-          <button class="btn secondary" data-action="recount">Пересчитать вопрос</button>
-          <button class="btn secondary" data-action="toggle-score-editor">Поправить баллы</button>
-          <a class="btn secondary" href="${miroUrl}" target="_blank" rel="noreferrer">Открыть Miro</a>
-          <button class="btn secondary" data-action="reset-test">Сбросить игру</button>
-          <button class="btn danger" data-action="final-reveal">Финал 3-2-1</button>
+          ${game.status === "round_running"
+            ? `<button class="btn" data-action="finish-round">Завершить раунд</button><button class="btn secondary" data-action="toggle-pause">${game.paused ? "Продолжить" : "Пауза"}</button>`
+            : `<button class="btn" data-action="start-round">Начать игру</button>`}
         </div>
         ${renderScoreResult()}
-        ${state.scoreEditor ? renderScoreEditor() : ""}
       </div>
       <div class="panel">
         <div class="panel-title">
@@ -338,8 +336,6 @@ function renderHostManualRound() {
         ${renderActivityBlock(round)}
         <div class="actions">
           <button class="btn" data-action="close-manual-round">Завершить раунд</button>
-          <a class="btn secondary" href="${miroUrl}" target="_blank" rel="noreferrer">Открыть Miro</a>
-          <button class="btn secondary" data-action="reset-test">Сбросить игру</button>
         </div>
       </div>
       <div class="panel">
@@ -366,12 +362,8 @@ function renderHostRoundOver() {
         </div>
         <div class="score-result"><strong>Раунд закончился</strong><span>Нажмите «Завершить раунд», чтобы показать итоги и перейти дальше.</span></div>
         ${renderScoreResult()}
-        ${state.scoreEditor ? renderScoreEditor() : ""}
         <div class="actions">
           <button class="btn" data-action="finish-round">Завершить раунд</button>
-          <button class="btn secondary" data-action="recount">Пересчитать вопрос</button>
-          <button class="btn secondary" data-action="toggle-score-editor">Поправить баллы</button>
-          <button class="btn secondary" data-action="reset-test">Сбросить игру</button>
         </div>
       </div>
       <div class="panel">
@@ -389,7 +381,6 @@ function renderHostRoundResults() {
         ${renderRoundResults()}
         <div class="actions">
           ${game.currentRoundIndex >= game.rounds.length - 1 ? `<button class="btn danger" data-action="final-reveal">Финал 3-2-1</button>` : `<button class="btn" data-action="next-round">Следующий раунд</button>`}
-          <a class="btn secondary" href="${miroUrl}" target="_blank" rel="noreferrer">Открыть Miro</a>
           <button class="btn secondary" data-action="reset-test">Сбросить тест</button>
         </div>
       </div>
@@ -482,7 +473,6 @@ function renderTeamBooting(team) {
         <p class="eyebrow">${safe(team.displayName)}</p>
         <h2>Готовим первый вопрос</h2>
         <p class="muted">Экран обновится сам, как только сервер синхронизирует команду.</p>
-        <a class="btn secondary" href="${miroUrl}" target="_blank" rel="noreferrer">Открыть карту Miro</a>
       </div>
     </section>
   `;
@@ -495,7 +485,6 @@ function renderTeamActivity(team) {
         <p class="eyebrow">${safe(team.displayName)} · ${safe(currentRound().title)}</p>
         <h2>Активность в зале</h2>
         <p class="muted">Следуйте за ведущей: баллы за этот раунд она начислит вручную.</p>
-        <a class="btn secondary" href="${miroUrl}" target="_blank" rel="noreferrer">Открыть карту Miro</a>
       </div>
     </section>
   `;
@@ -509,7 +498,6 @@ function renderTeamRoundResults(team) {
         <p class="eyebrow">${safe(team.displayName)}</p>
         <h2>${team.totalScore} ${pointsLabel(team.totalScore)}</h2>
         <p class="muted">Ждём следующий раунд. Карта Miro остаётся отдельной вкладкой.</p>
-        <div class="actions"><a class="btn secondary" href="${miroUrl}" target="_blank" rel="noreferrer">Открыть карту Miro</a></div>
       </div>
     </section>
   `;
@@ -670,18 +658,13 @@ function renderCity() {
             <p class="eyebrow">живая карта</p>
             <h2>Кайфоград в Miro</h2>
           </div>
-          <a class="btn" href="${miroUrl}" target="_blank" rel="noreferrer">Открыть Miro</a>
+          <div class="actions">
+            <button class="btn secondary" data-action="reload-miro">Перезагрузить карту</button>
+            <a class="btn" href="${miroUrl}" target="_blank" rel="noreferrer">Открыть Miro</a>
+          </div>
         </div>
         <div class="miro-frame">
-          ${state.miroLoaded
-            ? `<iframe class="miro-embed" src="${miroEmbedUrl}" allow="fullscreen; clipboard-read; clipboard-write"></iframe>`
-            : `<div class="miro-fallback">
-                 <span>Встроенная карта Miro грузится тяжело и может подлагивать. Надёжнее открыть её в отдельной вкладке. Либо показать прямо здесь.</span>
-                 <div class="actions">
-                   <a class="btn" href="${miroUrl}" target="_blank" rel="noreferrer">Открыть в Miro</a>
-                   <button class="btn secondary" data-action="load-miro">Показать карту здесь</button>
-                 </div>
-               </div>`}
+          <iframe class="miro-embed" src="${miroEmbedUrl}" allow="fullscreen; clipboard-read; clipboard-write"></iframe>
         </div>
       </div>
       <div class="panel">
@@ -692,7 +675,7 @@ function renderCity() {
         <div class="city-map">
           ${rounds.map((round) => {
             const stickers = game.cityResources.filter((item) => item.resource === round.resource);
-            return `<article class="district"><strong>${safe(round.resource)}</strong><p class="muted">${safe(resourceDescriptions[round.resource] || "")}</p>${stickers.map((item) => `<div class="sticker" style="--team-color:${item.color}">${safe(item.resource)}<br>${safe(item.teamName)}</div>`).join("")}</article>`;
+            return `<article class="district"><strong>${safe(round.resource)}</strong><p class="muted">${safe(resourceDescriptions[round.resource] || "")}</p>${stickers.map((item) => `<div class="sticker" style="--team-color:${item.color}">Раунд завершён<br>Победила команда ${item.teamId} — ${safe(item.teamName)}</div>`).join("")}</article>`;
           }).join("")}
         </div>
       </div>
@@ -710,9 +693,8 @@ function renderGameStatusLabel() {
 
 function renderQuestionMedia(q) {
   if (q.image === undefined) return "";
-  return q.image
-    ? `<img class="question-image" src="${safe(q.image)}" alt="картинка вопроса" />`
-    : `<div class="question-image placeholder">Картинка появится здесь</div>`;
+  if (!q.image) return `<div class="question-image placeholder">Картинка появится здесь</div>`;
+  return `<img class="question-image" src="${safe(q.image)}" alt="картинка вопроса" onerror="this.outerHTML='<div class=&quot;question-image placeholder&quot;>Картинка появится здесь</div>'" />`;
 }
 
 function renderQuestionInputPreview(mode = "") {
@@ -933,6 +915,7 @@ document.addEventListener("click", async (event) => {
       recount: { type: "recount", code: hostCode },
       "close-manual-round": { type: "closeManualRound", code: hostCode },
       "finish-round": { type: "finishRound", code: hostCode },
+      "toggle-pause": { type: "togglePause", code: hostCode },
       "next-round": { type: "nextRound", code: hostCode },
       "reset-test": { type: "reset", code: hostCode },
       "final-reveal": { type: "finalReveal", code: hostCode },
@@ -950,9 +933,9 @@ document.addEventListener("click", async (event) => {
       return;
     }
 
-    if (action === "load-miro") {
-      state.miroLoaded = true;
-      render();
+    if (action === "reload-miro") {
+      const frame = document.querySelector(".miro-embed");
+      if (frame) frame.src = miroEmbedUrl + (miroEmbedUrl.includes("?") ? "&" : "?") + "reload=" + Date.now();
       return;
     }
 

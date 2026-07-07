@@ -44,6 +44,8 @@ function createFreshGame() {
   game.finalReveal = "hidden";
   game.finalCountdown = 3;
   game.finalRevealAt = 0;
+  game.paused = false;
+  game.pausedRemainingMs = null;
   return game;
 }
 
@@ -60,6 +62,8 @@ async function loadGame() {
     parsed.finalReveal ||= "hidden";
     parsed.finalCountdown ??= 3;
     parsed.finalRevealAt ??= 0;
+    parsed.paused ??= false;
+    parsed.pausedRemainingMs ??= null;
     for (const team of parsed.teams) team.token ||= "";
     return parsed;
   } catch {
@@ -104,6 +108,7 @@ function isManualRound() {
 }
 
 function questionTimeLeftMs() {
+  if (game.paused) return game.pausedRemainingMs ?? 0;
   const duration = getQuestionDurationMs(game);
   if (!game.questionStartedAt || game.status !== "round_running") return duration;
   return Math.max(0, duration - (Date.now() - game.questionStartedAt));
@@ -120,7 +125,7 @@ function handleAction(action) {
     try {
       registerTeam(game, team.id, { name: action.name, color: action.color, captain: action.captain || "Команда" });
       team.token = randomUUID();
-      ensureCurrentRoundStarted(game);
+      // Игру запускает ведущая кнопкой «Начать игру» — авто-старт отключён.
     } catch (error) {
       return { error: error.message };
     }
@@ -167,6 +172,20 @@ function handleAction(action) {
     case "finishRound":
       closeRound(game);
       game.status = "round_results";
+      game.paused = false;
+      game.pausedRemainingMs = null;
+      break;
+    case "togglePause":
+      if (game.paused) {
+        game.paused = false;
+        if (game.status === "round_running" && game.pausedRemainingMs != null) {
+          game.questionStartedAt = Date.now() - (getQuestionDurationMs(game) - game.pausedRemainingMs);
+        }
+        game.pausedRemainingMs = null;
+      } else if (game.status === "round_running") {
+        game.pausedRemainingMs = questionTimeLeftMs();
+        game.paused = true;
+      }
       break;
     case "finalReveal":
       game.finalReveal = "countdown";
@@ -192,7 +211,7 @@ setInterval(() => {
       if (game.finalCountdown <= 0) game.finalReveal = "podium";
       changed = true;
     }
-  } else if (!isManualRound()) {
+  } else if (!isManualRound() && !game.paused) {
     if (game.status === "round_running" && game.questionStartedAt && questionTimeLeftMs() <= 0) {
       scoreCurrentQuestion(game);
       game.status = "question_scored";
