@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kaifograd",
+      "runtimeExecutable": "/Users/ekaterina/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+      "runtimeArgs": ["server.js"],
+      "port": 4173,
+      "autoPort": true
+    }
+  ]
+}
