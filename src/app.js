@@ -237,7 +237,7 @@ function renderBody() {
 function renderView() {
   const reveal = finalRevealMode();
   if (reveal !== "hidden") return renderFinalReveal(reveal);
-  if (state.view === "host") return state.hostUnlocked ? renderHost() : renderHostGate();
+  if (state.view === "host") return state.hostUnlocked ? `${renderHostRoundsStrip()}${renderHost()}` : renderHostGate();
   if (state.view === "screen") return renderScreen();
   if (state.view === "city") return renderCity();
   return renderTeam();
@@ -273,6 +273,14 @@ function renderHostGate() {
       <button class="btn" data-action="unlock-host">Открыть панель</button>
     </section>
   `;
+}
+
+function renderHostRoundsStrip() {
+  const rounds = game?.rounds || [];
+  const chips = rounds
+    .map((r, i) => `<span class="round-chip ${i === game.currentRoundIndex ? "current" : ""}">${i + 1}. ${safe(r.title)}</span>`)
+    .join("");
+  return `<section class="rounds-strip"><span class="rounds-strip-label">Раунд ${game.currentRoundIndex + 1} / ${rounds.length}</span><div class="round-chips">${chips}</div></section>`;
 }
 
 function renderHost() {
