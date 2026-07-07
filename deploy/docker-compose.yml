@@ -1,0 +1,33 @@
+# Разворачивается на VM 212.147.238.3 в ~deploy/kaifograd.
+# Образ приезжает из GHCR (публичный пакет), CI делает docker compose pull + up -d.
+name: kaifograd
+
+networks:
+  # Внешняя сеть kate-stack: Alloy собирает логи контейнеров из неё.
+  kate-stack_obs:
+    external: true
+
+volumes:
+  kaifograd-data:
+
+services:
+  kaifograd:
+    image: ghcr.io/ekaterinaglowme/kaifograd:latest
+    mem_limit: 256m
+    cpus: 0.5
+    ports:
+      - "0.0.0.0:4173:4173"
+    environment:
+      PORT: 4173
+      HOST_CODE: ${HOST_CODE:-0306}
+      TEAMS: ${TEAMS:-6}
+      STATE_FILE: /data/game-state.json
+    volumes:
+      - kaifograd-data:/data
+    networks: [kate-stack_obs]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+game-state.json
+*.log
+.DS_Store
+qa-*.png
+docs
+tests
+deploy
+.claude

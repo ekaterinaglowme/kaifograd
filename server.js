@@ -24,7 +24,7 @@ const hostCode = process.env.HOST_CODE || "0306";
 const teamSlots = Math.max(2, Math.min(10, Number(process.env.TEAMS) || 6));
 const questionResultPauseMs = 2500;
 const finalStepMs = 800;
-const stateFile = join(root, "game-state.json");
+const stateFile = process.env.STATE_FILE || join(root, "game-state.json");
 
 const types = {
   ".html": "text/html; charset=utf-8",
