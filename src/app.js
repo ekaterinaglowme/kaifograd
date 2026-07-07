@@ -872,6 +872,19 @@ function renderTeamAnswerControl(team) {
 }
 
 function renderScreen() {
+  if (game.status === "lobby") {
+    return html`
+      <section class="projector-screen">
+        <div class="panel projector-panel">
+          <div class="question projector-question projector-welcome">
+            <h2 class="projector-round-title">Игра скоро начнётся 🎉</h2>
+            <h2 class="projector-prompt">Дорогие прекрасные коллеги, садитесь поудобнее и приготовьтесь кайфовать!</h2>
+            <p class="projector-meta">Команд в игре: ${readyTeams().length}</p>
+          </div>
+        </div>
+      </section>
+    `;
+  }
   if (game.status === "round_review") {
     return html`
       <section class="projector-screen">
