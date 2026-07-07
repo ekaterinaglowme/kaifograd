@@ -909,15 +909,17 @@ button:disabled {
 
 .activity {
   display: grid;
-  gap: 16px;
+  grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(20px, 3vw, 44px);
   margin-top: 8px;
 }
 
-.activity-image {
+.activity-mascot {
   width: 100%;
-  border-radius: 24px;
-  object-fit: cover;
-  max-height: 360px;
+  max-height: min(46vh, 520px);
+  object-fit: contain;
+  filter: drop-shadow(0 26px 36px rgba(33, 34, 43, 0.16));
 }
 
 .activity-image.placeholder {
@@ -930,6 +932,21 @@ button:disabled {
   text-align: center;
   padding: 20px;
   background: rgba(244, 109, 175, 0.05);
+}
+
+.activity-rules {
+  align-self: stretch;
+  justify-content: center;
+  padding: clamp(28px, 3vw, 44px);
+}
+
+.activity-rules strong {
+  font-size: clamp(28px, 3vw, 46px);
+}
+
+.activity-rules span {
+  font-size: clamp(24px, 2.2vw, 34px);
+  line-height: 1.18;
 }
 
 .manual-winner {
@@ -1049,7 +1066,18 @@ button:disabled {
 }
 
 .projector-review .film-review-image {
-  max-height: min(72vh, 780px);
+  max-height: min(58vh, 620px);
+}
+
+.projector-review .film-review-title {
+  margin-top: -4px;
+  gap: 2px;
+}
+
+.projector-review .film-review-title h2 {
+  max-width: min(92vw, 1500px);
+  font-size: clamp(44px, 5.2vw, 74px);
+  line-height: 0.98;
 }
 
 @media (max-width: 720px) {
@@ -1058,8 +1086,12 @@ button:disabled {
   }
   .question-split.film-question,
   .projector-question.question-split.film-question,
+  .activity,
   .manual-winner-row {
     grid-template-columns: 1fr;
+  }
+  .activity-mascot {
+    max-height: 260px;
   }
   .question-split .question-media-side .question-image,
   .question-split .question-media-side .question-image.placeholder {

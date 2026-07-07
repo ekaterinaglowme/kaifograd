@@ -53,6 +53,14 @@ test("captain client no longer shows a waiting-for-host-start screen", async () 
   assert.doesNotMatch(source, /ведущая запустит раунд/);
 });
 
+test("team tab keeps setup/login flow free from global host error banners", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+
+  assert.match(source, /state\.error && state\.view !== "team"/);
+  assert.match(source, /PIN выдаётся командам/);
+  assert.doesNotMatch(source, /PIN выдаётся капитанам/);
+});
+
 test("app header uses final Kaifograd branding", async () => {
   const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
@@ -146,11 +154,14 @@ test("host panel is a full control desk without Miro shortcut", async () => {
 
 test("manual round has repeatable 60 second attempts for teams", async () => {
   const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../styles.css", import.meta.url), "utf8");
 
   assert.match(source, /start-manual-attempt/);
   assert.match(source, /finish-manual-attempt/);
   assert.match(source, /toggle-manual-attempt-pause/);
   assert.match(source, /manualAttempt/);
+  assert.match(source, /activity-mascot/);
+  assert.match(styles, /\.activity-rules span[\s\S]*font-size: clamp\(24px, 2\.2vw, 34px\)/);
   assert.match(source, /60 сек/);
 });
 
@@ -175,6 +186,8 @@ test("client supports film answer review, manual winner PIN, and final congrats"
   assert.match(source, /awardManualWinnerByPin/);
   assert.match(source, /renderFinalCongrats/);
   assert.match(styles, /\.film-review-image/);
+  assert.match(styles, /\.projector-review \.film-review-image[\s\S]*max-height: min\(58vh, 620px\)/);
+  assert.match(styles, /\.projector-review \.film-review-title h2[\s\S]*font-size: clamp\(44px, 5\.2vw, 74px\)/);
   assert.match(styles, /\.final-congrats/);
 });
 

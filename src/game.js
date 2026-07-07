@@ -181,7 +181,12 @@ export function registerTeam(game, teamId, { name = "", color, captain = "" } = 
 }
 
 export function updateTeamSetup(game, teamId, { name = "", color, captain = "" } = {}) {
-  if (game.status !== "lobby") throw new Error("Название команды можно менять только до начала игры");
+  const team = teamById(game, teamId);
+  // Первичный вход (команда ещё не готова) разрешён в любой момент — чтобы опоздавшие
+  // могли присоединиться и играть. Переименование уже готовой команды — только до старта.
+  if (team.ready && game.status !== "lobby") {
+    throw new Error("Название команды можно менять только до начала игры");
+  }
   return registerTeam(game, teamId, { name, color, captain });
 }
 

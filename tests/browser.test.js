@@ -63,13 +63,13 @@ test("PIN 101 opens team 1 and captain can edit name and color before start", as
       await page.locator('[data-field="setup-team-name"]').fill("UI Команда");
       await page.locator('[data-color="#FF5FA2"]').click();
       await page.locator('[data-action="save-team-setup"]').click();
-      await assertVisibleText(page, "Название и цвет команды");
+      await assertVisibleText(page, "Спасибо! Название сохранено");
 
       let game = await state(server.baseUrl);
       assert.equal(game.teams[0].displayName, "UI Команда");
       assert.equal(game.teams[0].color, "#FF5FA2");
 
-      await page.locator('[data-view="team"]').click();
+      await page.locator('[data-action="edit-team-setup"]').click();
       await page.locator('[data-field="setup-team-name"]').fill("UI Команда 2");
       await page.locator('[data-action="save-team-setup"]').click();
 

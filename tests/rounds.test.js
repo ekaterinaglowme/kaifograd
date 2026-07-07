@@ -38,12 +38,25 @@ test("film round uses blurred questions and original answer slides in order", ()
   });
 });
 
-test("manual island round has the ball image and meme round uses available meme assets", () => {
+test("manual island round has the balloon cat mascot and meme round uses available meme assets", () => {
   const islandRound = fullRounds[3];
   const memeRound = fullRounds[5];
+  const memeImages = [
+    "assets/мем1.jpeg",
+    "assets/мем2.jpeg",
+    "assets/мем3.jpg",
+    "assets/мем4.jpeg",
+    "assets/мем5.jpeg",
+    "assets/мем6.png",
+    "assets/мем7.png",
+  ];
 
-  assert.equal(islandRound.image, "assets/island-balls.png");
-  assert.equal(existsSync(new URL("../assets/island-balls.png", import.meta.url)), true);
-  assert.equal(memeRound.questions[5].image, "assets/meme-6.png");
-  assert.equal(existsSync(new URL("../assets/meme-6.png", import.meta.url)), true);
+  assert.equal(islandRound.image, undefined);
+  assert.equal(islandRound.mascotImage, "assets/balloon-cat.png");
+  assert.equal(existsSync(new URL("../assets/balloon-cat.png", import.meta.url)), true);
+  assert.equal(memeRound.questions.length, memeImages.length);
+  memeRound.questions.forEach((question, index) => {
+    assert.equal(question.image, memeImages[index]);
+    assert.equal(existsSync(new URL(`../${question.image}`, import.meta.url)), true);
+  });
 });

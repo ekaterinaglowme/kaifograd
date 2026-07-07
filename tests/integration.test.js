@@ -114,6 +114,108 @@ test("answers require saved setup and then score normally", async () => {
   }
 });
 
+test("team that logged in by PIN can still join and play after the game started", async () => {
+  const server = await startTestServer();
+  try {
+    await action(server.baseUrl, { type: "reset", code: "0306" });
+    // Команда 2 вошла по PIN, но не успела сохранить настройку до старта.
+    const login = await action(server.baseUrl, { type: "loginTeam", pin: "102" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+
+    // Первичный вход (стать ready) разрешён и после старта — команда не заперта.
+    const joined = await action(server.baseUrl, {
+      type: "join",
+      teamId: 2,
+      token: login.token,
+      name: "Опоздавшие",
+      color: "#7CFF8A",
+      captain: "Команда",
+    });
+    assert.equal(joined.ok, true);
+
+    // И сразу может отвечать и получать баллы.
+    await action(server.baseUrl, { type: "submitAnswer", teamId: 2, token: login.token, value: "B" });
+    await action(server.baseUrl, { type: "scoreNow", code: "0306" });
+
+    const game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.teams[1].ready, true);
+    assert.equal(game.teams[1].displayName, "Опоздавшие");
+    assert.equal(game.answers["0:0"][2].value, "B");
+    assert.equal(game.teams[1].totalScore, 1);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("a team that is already ready still cannot rename after the game started", async () => {
+  const server = await startTestServer();
+  try {
+    await action(server.baseUrl, { type: "reset", code: "0306" });
+    const login = await loginAndJoin(server.baseUrl, "101", { name: "Готовые", color: "#FF5FA2" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+
+    const rename = await actionMayFail(server.baseUrl, {
+      type: "join",
+      teamId: 1,
+      token: login.token,
+      name: "Новое имя после старта",
+      color: "#FFE45C",
+      captain: "Команда",
+    });
+    assert.equal(rename.ok, false);
+    assert.match(rename.body.error, /до начала игры/);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("a team interacts correctly across choice, film and manual rounds", async () => {
+  const server = await startTestServer();
+  try {
+    await action(server.baseUrl, { type: "reset", code: "0306" });
+    const login = await loginAndJoin(server.baseUrl, "101", { name: "Сквозные", color: "#FF5FA2" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+
+    // Раунд 1 «Разминка» — вопрос с вариантами, верный B.
+    await action(server.baseUrl, { type: "submitAnswer", teamId: 1, token: login.token, value: "B" });
+    await action(server.baseUrl, { type: "scoreNow", code: "0306" });
+    let game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.answers["0:0"][1].value, "B");
+    assert.equal(game.teams[0].totalScore, 1);
+
+    // Переходим к раунду 3 «Угадай фильм» (текстовый ответ по картинке).
+    await action(server.baseUrl, { type: "nextRound", code: "0306" });
+    await action(server.baseUrl, { type: "nextRound", code: "0306" });
+    game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.rounds[game.currentRoundIndex].title, "Угадай фильм");
+    const filmAnswer = game.rounds[game.currentRoundIndex].questions[0].answer;
+    await action(server.baseUrl, { type: "submitAnswer", teamId: 1, token: login.token, value: filmAnswer });
+    await action(server.baseUrl, { type: "scoreNow", code: "0306" });
+    game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.answers[`${game.currentRoundIndex}:0`][1].value, filmAnswer);
+    assert.equal(game.teams[0].totalScore, 2);
+
+    // Переходим к раунду 4 «Кайфуй и работай» (ручной) — ответы не принимаются, но команда не заперта.
+    await action(server.baseUrl, { type: "nextRound", code: "0306" });
+    game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.rounds[game.currentRoundIndex].manual, true);
+    const manualSubmit = await actionMayFail(server.baseUrl, {
+      type: "submitAnswer",
+      teamId: 1,
+      token: login.token,
+      value: "что-то",
+    });
+    assert.equal(manualSubmit.ok, false);
+    assert.match(manualSubmit.body.error, /нельзя отвечать/i);
+
+    // Приватность на боевом раунде: команда видит только свой ответ.
+    const teamView = await state(server.baseUrl, `view=team&team=1&token=${encodeURIComponent(login.token)}`);
+    assert.equal(teamView.viewer.teamAccess, true);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("viewer privacy hides answers from teams and observer but shows them to host", async () => {
   const server = await startTestServer();
   try {

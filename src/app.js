@@ -16,6 +16,7 @@ const state = {
   setupName: "",
   setupColor: "",
   setupPin: "",
+  editingSetup: false,
   lastAnswerKey: "",
   scoreEditor: false,
   miroLoaded: false,
@@ -385,7 +386,7 @@ function render() {
 
 function renderBody() {
   if (!game) return renderLoading();
-  if (state.error) return `${renderError()}${renderView()}`;
+  if (state.error && state.view !== "team") return `${renderError()}${renderView()}`;
   return renderView();
 }
 
@@ -638,8 +639,8 @@ function renderTeam() {
   const team = game.teams.find((item) => item.id === state.selectedTeamId) || game.teams[0];
   if (!hasCurrentTeamToken()) return renderTeamPinGate();
   if (game.viewer?.teamAccess === false) return renderTeamLocked(team);
-  if (game.status === "lobby") return renderTeamSetup(team);
-  if (!team.ready) return renderTeamSetupClosed(team);
+  if (game.status === "lobby") return team.ready && !state.editingSetup ? renderTeamSaved(team) : renderTeamSetup(team);
+  if (!team.ready) return renderTeamSetup(team);
   if (game.status === "round_results") return renderTeamRoundResults(team);
   if (game.status === "round_over") return renderTeamRoundOver(team);
   if (game.status === "round_review") return renderTeamFilmAnswerReview(team);
@@ -653,7 +654,7 @@ function renderTeamPinGate() {
       <div class="panel setup-card">
         <p class="eyebrow">вход команды</p>
         <h2>Введите PIN команды</h2>
-        <p class="muted">PIN выдаётся капитанам в день мероприятия. По нему приложение само определит номер команды.</p>
+        <p class="muted">PIN выдаётся командам в день мероприятия. По нему приложение само определит номер команды.</p>
         ${renderTeamNotice()}
         <input class="input" data-field="team-pin" value="${safe(state.setupPin)}" inputmode="numeric" autocomplete="one-time-code" placeholder="Например: 101" />
         <button class="btn" data-action="login-team">Войти</button>
@@ -676,7 +677,7 @@ function renderTeamSetup(team) {
       <div class="panel setup-card">
         <p class="eyebrow">${safe(team.slotName)}</p>
         <h2>Название и цвет команды</h2>
-        <p class="muted">До начала игры можно переименовать команду и выбрать цвет стикеров.</p>
+        <p class="muted">${game.status === "lobby" ? "До начала игры можно переименовать команду и выбрать цвет стикеров." : "Игра уже идёт — введите название и цвет, чтобы присоединиться и отвечать."}</p>
         <label class="muted">Название команды</label>
         <input class="input" data-field="setup-team-name" value="${safe(selectedName)}" placeholder="Например: Архитекторы кайфа" />
         <label class="muted">Цвет стикеров и графика</label>
@@ -688,6 +689,19 @@ function renderTeamSetup(team) {
           }).join("")}
         </div>
         <button class="btn" data-action="save-team-setup">${team.ready ? "Сохранить" : "Готово, играть"}</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderTeamSaved(team) {
+  return html`
+    <section class="setup-shell">
+      <div class="panel setup-card team-saved-card" style="--team-color:${team.color}">
+        <p class="eyebrow"><span class="swatch"></span> ${safe(team.displayName)}</p>
+        <h2>Спасибо! Название сохранено 🎉</h2>
+        <p class="muted">Команда «${safe(team.displayName)}» в игре. Удачи! Ждём, пока ведущая начнёт — экран сам переключится на первый вопрос.</p>
+        <button class="btn secondary" data-action="edit-team-setup">Изменить название или цвет</button>
       </div>
     </section>
   `;
@@ -1059,13 +1073,13 @@ function renderQuestionInputPreview(mode = "") {
 }
 
 function renderActivityBlock(round) {
-  const image = round.image
-    ? `<img class="activity-image" src="${safe(round.image)}" alt="${safe(round.title)}" />`
-    : `<div class="activity-image placeholder">Сюда вставится картинка</div>`;
+  const mascot = round.mascotImage
+    ? `<img class="activity-mascot" src="${safe(round.mascotImage)}" alt="" />`
+    : "";
   return html`
     <div class="activity">
-      ${image}
-      <div class="score-result"><strong>Правила</strong><span>${safe(round.rules || "Правила впишет ведущая.")}</span></div>
+      ${mascot}
+      <div class="score-result activity-rules"><strong>Правила</strong><span>${safe(round.rules || "Правила впишет ведущая.")}</span></div>
     </div>
   `;
 }
@@ -1278,8 +1292,18 @@ document.addEventListener("click", async (event) => {
       state.setupName = "";
       state.setupColor = "";
       state.teamNotice = "";
+      state.editingSetup = false;
       connectEvents();
       await fetchState();
+      return;
+    }
+
+    if (action === "edit-team-setup") {
+      state.editingSetup = true;
+      const team = game.teams.find((item) => item.id === state.selectedTeamId);
+      state.setupName = team?.name || "";
+      state.setupColor = team?.color || "";
+      render();
       return;
     }
 
