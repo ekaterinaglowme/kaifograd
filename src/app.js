@@ -899,7 +899,6 @@ function renderScreen() {
     return html`
       <section class="projector-screen">
         <div class="panel projector-panel">
-          ${renderRoundResults()}
           <div class="panel-title"><h2>Общий счёт</h2></div>
           ${renderBarChart(false)}
         </div>

@@ -191,7 +191,7 @@ test("observer shows round countdown/results without admin controls", async () =
       await assertVisibleText(page, "итоги раунда");
       await page.locator(".countdown-number").waitFor({ state: "visible" });
       await waitForState(server.baseUrl, (game) => game.status === "round_results");
-      await assertVisibleText(page, "Итоги раунда");
+      await assertVisibleText(page, "Общий счёт");
 
       const body = await page.locator("body").innerText();
       assert.doesNotMatch(body, /Поправить баллы|Сбросить игру|Следующий раунд/);

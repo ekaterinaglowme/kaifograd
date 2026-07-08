@@ -41,7 +41,7 @@ test("observer screen contains quiz and reveal content, not host controls", asyn
   const renderScreenSource = source.slice(renderScreenStart, renderScreenEnd);
 
   assert.ok(renderScreenStart >= 0);
-  assert.match(renderScreenSource, /renderRoundResults/);
+  assert.match(renderScreenSource, /renderBarChart/);
   assert.doesNotMatch(renderScreenSource, /renderScoreEditor/);
   assert.doesNotMatch(renderScreenSource, /data-action="adjust-score"/);
 });
