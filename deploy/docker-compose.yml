@@ -32,7 +32,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Логи kaifograd на отдельном порту :4174 как text/plain. На каждое подключение
+  # Логи kaifograd на отдельном порту :9099 как text/plain. На каждое подключение
   # отдаёт последние 200 строк логов контейнера приложения. Клиентский ввод не
   # используется — на сокете всегда одна фиксированная команда, инъекции через
   # порт нет. docker.sock смонтирован ro.
@@ -40,17 +40,21 @@ services:
     image: docker:27-cli
     mem_limit: 64m
     cpus: 0.1
+    # nc -e запускает обработчик на КАЖДОЕ подключение, поэтому docker logs снимается
+    # в момент запроса (никакого отставания), а -lk держит сервер персистентным.
     entrypoint: ["sh", "-c"]
     command:
       - |
-        while true; do
-          {
-            printf 'HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n'
-            docker logs --tail 200 kaifograd-kaifograd-1 2>&1
-          } | nc -l -p 8080
-        done
+        cat > /tmp/serve <<'EOF'
+        #!/bin/sh
+        printf 'HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n'
+        docker logs --tail 200 kaifograd-kaifograd-1 2>&1
+        EOF
+        chmod +x /tmp/serve
+        exec nc -lk -p 8080 -e /tmp/serve
     ports:
-      - "0.0.0.0:4174:8080"
+      # Не рядом с игровым 4173, чтобы случайно не дать командам ссылку на логи.
+      - "0.0.0.0:9099:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [kate-stack_obs]

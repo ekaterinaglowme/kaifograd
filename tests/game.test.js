@@ -404,6 +404,62 @@ test("serializeForViewer marks occupied teams as locked without the team token",
   assert.equal(unlockedView.answers["0:0"][1].value, "B");
 });
 
+test("serializeForViewer flags a stale team token after the game is reset", () => {
+  const game = createGame({ teamCount: 2 });
+  registerTeam(game, 1, { name: "Была", color: "#FF5FA2" });
+  game.teams[0].token = "old-token";
+
+  // Reset забывает токены: команда снова не готова и без токена, но клиент держит старый.
+  game.teams[0].ready = false;
+  game.teams[0].token = "";
+
+  const staleView = serializeForViewer(game, { teamId: 1, teamToken: "old-token" });
+  assert.equal(staleView.viewer.tokenStale, true);
+
+  // Без токена (свежий клиент) — не stale, просто идёт на PIN-гейт обычным путём.
+  const freshView = serializeForViewer(game, { teamId: 1, teamToken: "" });
+  assert.equal(freshView.viewer.tokenStale, false);
+
+  // Совпадающий токен — не stale.
+  const active = createGame({ teamCount: 2 });
+  registerTeam(active, 1, { name: "Ок", color: "#FF5FA2" });
+  active.teams[0].token = "t";
+  assert.equal(serializeForViewer(active, { teamId: 1, teamToken: "t" }).viewer.tokenStale, false);
+
+  // Ведущая (seeAllAnswers) — никогда не stale.
+  assert.equal(serializeForViewer(game, { seeAllAnswers: true }).viewer.tokenStale, false);
+});
+
+test("serializeForViewer reveals round answers on results only for revealAnswers rounds", () => {
+  const game = createGame({ teamCount: 2 });
+  game.status = "round_results";
+  game.currentRoundIndex = 0;
+  game.rounds[0].revealAnswers = true;
+  game.rounds[0].questions = [
+    { type: "song", artist: "Pixies", title: "Where Is My Mind?", artistAccepted: ["pixies"], titleAccepted: ["where is my mind"] },
+    { type: "text", answer: "Чипи чапа", acceptedAnswers: ["чипи чапа"] },
+  ];
+  game.rounds[1].revealAnswers = false;
+  game.rounds[1].questions = [{ type: "text", answer: "Секрет" }];
+
+  const teamView = serializeForViewer(game, { teamId: 1 });
+  const song = teamView.rounds[0].questions[0];
+  assert.equal(song.artist, "Pixies");
+  assert.equal(song.title, "Where Is My Mind?");
+  assert.equal("artistAccepted" in song, false);
+  assert.equal("titleAccepted" in song, false);
+  assert.equal(teamView.rounds[0].questions[1].answer, "Чипи чапа");
+  assert.equal("acceptedAnswers" in teamView.rounds[0].questions[1], false);
+  // Раунд без revealAnswers — ответ скрыт.
+  assert.equal("answer" in teamView.rounds[1].questions[0], false);
+
+  // До итогов (round_running) ответы скрыты даже у revealAnswers-раунда.
+  game.status = "round_running";
+  const running = serializeForViewer(game, { teamId: 1 });
+  assert.equal("artist" in running.rounds[0].questions[0], false);
+  assert.equal("answer" in running.rounds[0].questions[1], false);
+});
+
 test("serializeForViewer returns a copy, not the live game", () => {
   const game = createGame({ teamCount: 2 });
 

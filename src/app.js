@@ -82,6 +82,14 @@ function applyIncomingGame(nextGame) {
   const previousGame = game;
   game = nextGame;
   state.connection = "online";
+  // Сервер сбросил игру и забыл наш токен — уходим на PIN-гейт с понятным сообщением,
+  // а не даём клиенту думать, что он в игре, и ловить 400 на первом же действии.
+  if (game?.viewer?.tokenStale && hasCurrentTeamToken()) {
+    sessionStorage.removeItem(teamTokenKey(state.selectedTeamId));
+    state.teamNotice = "Игра перезапущена. Войдите по PIN команды заново.";
+    render();
+    return;
+  }
   resetDraftForQuestion();
   if (shouldPreserveFocusedAnswer(previousGame)) updateLiveTimers();
   else render();
@@ -861,6 +869,7 @@ function renderTeamAnswerControl(team) {
   }
   if (q.type === "song") {
     return html`
+      <img class="listen-cat" src="assets/listen-cat.jpg" alt="Звучит песня" onerror="this.remove()" />
       <input class="input answer-input" data-field="answer-artist" value="${safe(state.songArtist)}" placeholder="Исполнитель" />
       <input class="input answer-input song-second" data-field="answer-title" value="${safe(state.songTitle)}" placeholder="Название песни" />
       <div class="actions answer-actions"><button class="btn" data-action="submit-answer">Отправить ответ</button></div>
@@ -878,6 +887,7 @@ function renderScreen() {
       <section class="projector-screen">
         <div class="panel projector-panel">
           <div class="question projector-question projector-welcome">
+            <img class="lobby-office" src="assets/office.jpg" alt="" onerror="this.remove()" />
             <h2 class="projector-round-title">Игра скоро начнётся</h2>
             <h2 class="projector-prompt">Коллеги, садитесь поудобнее, занимайте места и готовьтесь строить Кайфоград.</h2>
             <p class="projector-meta">Команд в игре: ${readyTeams().length}</p>
@@ -901,6 +911,7 @@ function renderScreen() {
         <div class="panel projector-panel">
           <div class="panel-title"><h2>Общий счёт</h2></div>
           ${renderBarChart(false)}
+          ${renderRoundAnswers()}
         </div>
       </section>
     `;
@@ -995,14 +1006,14 @@ function renderFilmAnswerReview(context = "team") {
 
 function renderRoundCountdown() {
   const count = Math.max(1, game.roundCountdown ?? 3);
-  return `<section class="panel countdown"><div><img class="countdown-cat" src="assets/loading-cat.png" alt="" onerror="this.remove()" /><p class="eyebrow">итоги раунда</p><div class="countdown-number">${count}</div><h2>${safe(currentRound().title)}</h2></div></section>`;
+  return `<section class="panel countdown"><div><img class="countdown-cat" src="assets/loading-cat.jpg" alt="" onerror="this.remove()" /><p class="eyebrow">итоги раунда</p><div class="countdown-number">${count}</div><h2>${safe(currentRound().title)}</h2></div></section>`;
 }
 
 function renderFinalReveal(mode) {
   const podium = getFinalPodium(game);
   if (mode === "countdown") {
     const count = Math.max(1, game.finalCountdown ?? 3);
-    return `<section class="panel countdown"><div><p class="eyebrow">финальное раскрытие</p><div class="countdown-number">${count}</div><h2>Считаем вклад в Кайфоград...</h2></div></section>`;
+    return `<section class="panel countdown"><div><img class="countdown-cat" src="assets/loading-cat.jpg" alt="" onerror="this.remove()" /><p class="eyebrow">финальное раскрытие</p><div class="countdown-number">${count}</div><h2>Считаем вклад в Кайфоград...</h2></div></section>`;
   }
   if (mode === "congrats") return renderFinalCongrats(podium);
   return html`
@@ -1060,7 +1071,8 @@ function renderCity() {
         <div class="city-map">
           ${rounds.map((round) => {
             const stickers = game.cityResources.filter((item) => item.resource === round.resource);
-            return `<article class="district"><strong>${safe(round.resource)}</strong><p class="muted">${safe(resourceDescriptions[round.resource] || "")}</p>${stickers.map((item) => `<div class="sticker" style="--team-color:${item.color}">Раунд завершён<br>Победила команда ${item.teamId} — ${safe(item.teamName)}</div>`).join("")}</article>`;
+            const cardName = round.cityName || round.resource;
+            return `<article class="district"><strong>${safe(cardName)}</strong><p class="muted">${safe(resourceDescriptions[round.resource] || "")}</p>${stickers.map((item) => `<div class="sticker" style="--team-color:${item.color}">Раунд завершён<br>Победила команда ${item.teamId} — ${safe(item.teamName)}</div>`).join("")}</article>`;
           }).join("")}
         </div>
       </div>
@@ -1091,7 +1103,7 @@ function renderQuestionInputPreview(mode = "") {
     return `<div class="${optionsClass}">${q.options.map((option, index) => `<div class="option">${"ABCD"[index]}. ${safe(option)}</div>`).join("")}</div>`;
   }
   if (q.type === "song") {
-    return `<div class="panel mini-note"><span class="muted">Звучит песня · команды вписывают исполнителя и название</span></div>`;
+    return `<div class="panel mini-note song-note"><img class="listen-cat" src="assets/listen-cat.jpg" alt="Звучит песня" onerror="this.remove()" /><span class="muted">Звучит песня · команды вписывают исполнителя и название</span></div>`;
   }
   return `<div class="panel mini-note"><span class="muted">${q.type === "number" ? "Ответ числом" : "Открытый ответ"} · команды видят поле ввода у себя</span></div>`;
 }
@@ -1182,7 +1194,26 @@ function renderRoundResults() {
     <div class="answer-list round-score-list">
       ${result.roundScores.map((team) => `<article class="answer-card" style="--team-color:${team.color}"><div class="team-row"><strong><span class="swatch"></span> ${safe(team.teamName)}</strong><span class="status">${team.score} ${pointsLabel(team.score)}</span></div></article>`).join("")}
     </div>
+    ${renderRoundAnswers()}
   `;
+}
+
+// Правильные ответы прошедшего раунда — показываем на итогах для раундов с revealAnswers
+// (мемы и песни). Данные приходят от сервера в round_results (serializeForViewer).
+function renderRoundAnswers() {
+  const result = game.roundResults[game.roundResults.length - 1];
+  if (!result) return "";
+  const round = game.rounds?.[result.roundIndex];
+  if (!round?.revealAnswers) return "";
+  const items = (round.questions || [])
+    .map((q, index) => {
+      const answer = q.type === "song" ? [q.artist, q.title].filter(Boolean).join(" — ") : q.answerTitle || q.answer || "";
+      return answer ? `<li><span class="ra-num">${index + 1}</span><span>${safe(answer)}</span></li>` : "";
+    })
+    .filter(Boolean)
+    .join("");
+  if (!items) return "";
+  return `<div class="round-answers"><h3>Правильные ответы</h3><ol class="round-answers-list">${items}</ol></div>`;
 }
 
 function renderScoreEditor() {

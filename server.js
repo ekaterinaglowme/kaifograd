@@ -467,7 +467,7 @@ function sendJson(response, status, payload) {
 }
 
 // Каждый запрос пишем одной строкой в stdout — это то, что видно в логах контейнера
-// (docker logs / вкладка логов на :4174). Помогает ловить, например, 400 на просроченный токен.
+// (docker logs / вкладка логов на :9099). Помогает ловить, например, 400 на просроченный токен.
 function logRequest(request, status, detail = "") {
   const ip = request.headers["x-forwarded-for"] || request.socket?.remoteAddress || "-";
   const method = request.method;

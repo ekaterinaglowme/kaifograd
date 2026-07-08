@@ -429,9 +429,16 @@ export function serializeForViewer(game, { seeAllAnswers = false, teamId = null,
     !liveTeam.token ||
     liveTeam.token === teamToken;
 
+  // Клиент прислал токен, а у сервера для этой команды токена уже нет — значит игру
+  // сбросили (createFreshGame чистит токены). Клиент считает себя авторизованным, но
+  // join/submitAnswer его отобьют 400. Помечаем, чтобы клиент сбросил токен и заново
+  // вошёл по PIN, а не упирался в непонятную ошибку.
+  const tokenStale = !seeAllAnswers && teamId != null && teamToken !== "" && liveTeam != null && !liveTeam.token;
+
   clone.viewer = {
     teamId,
     teamAccess,
+    tokenStale,
   };
 
   if (seeAllAnswers) return clone;
@@ -448,25 +455,35 @@ export function serializeForViewer(game, { seeAllAnswers = false, teamId = null,
   // показываем ответ только текущего слайда.
   const isReview = clone.status === "round_review";
   const revealIndex = clone.currentReviewIndex || 0;
-  clone.rounds = (clone.rounds || []).map((round, ri) => ({
-    ...round,
-    questions: (round.questions || []).map((q, qi) => {
-      const keepReveal = isReview && ri === clone.currentRoundIndex && qi === revealIndex;
-      const safeQ = { ...q };
-      delete safeQ.correct;
-      delete safeQ.acceptedAnswers;
-      delete safeQ.artist;
-      delete safeQ.title;
-      delete safeQ.artistAccepted;
-      delete safeQ.titleAccepted;
-      if (!keepReveal) {
-        delete safeQ.answer;
-        delete safeQ.answerTitle;
-        delete safeQ.revealImage;
-      }
-      return safeQ;
-    }),
-  }));
+  // На итогах раунда (round_results) для раундов с revealAnswers показываем правильные
+  // ответы этого раунда всем — но только их (не варианты матчинга и не другие раунды).
+  const showRoundAnswers = clone.status === "round_results";
+  clone.rounds = (clone.rounds || []).map((round, ri) => {
+    const revealThisRound = showRoundAnswers && Boolean(round.revealAnswers) && ri === clone.currentRoundIndex;
+    return {
+      ...round,
+      questions: (round.questions || []).map((q, qi) => {
+        const keepReveal = isReview && ri === clone.currentRoundIndex && qi === revealIndex;
+        const safeQ = { ...q };
+        delete safeQ.correct;
+        delete safeQ.acceptedAnswers;
+        delete safeQ.artistAccepted;
+        delete safeQ.titleAccepted;
+        if (!revealThisRound) {
+          delete safeQ.artist;
+          delete safeQ.title;
+        }
+        if (!keepReveal && !revealThisRound) {
+          delete safeQ.answer;
+          delete safeQ.answerTitle;
+        }
+        if (!keepReveal) {
+          delete safeQ.revealImage;
+        }
+        return safeQ;
+      }),
+    };
+  });
 
   return clone;
 }
