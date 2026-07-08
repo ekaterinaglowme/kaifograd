@@ -32,17 +32,23 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Просмотр логов kaifograd на отдельном порту :4174. Dozzle читает docker.sock
-  # (ro), показывает последние 200 строк (DOZZLE_TAILSIZE) и стримит новые.
-  # Фильтр — только контейнер приложения, не сам просмотрщик.
+  # Логи kaifograd на отдельном порту :4174 как text/plain. На каждое подключение
+  # отдаёт последние 200 строк логов контейнера приложения. Клиентский ввод не
+  # используется — на сокете всегда одна фиксированная команда, инъекции через
+  # порт нет. docker.sock смонтирован ro.
   logs:
-    image: amir20/dozzle:latest
-    mem_limit: 128m
-    cpus: 0.25
-    environment:
-      DOZZLE_TAILSIZE: "200"
-      DOZZLE_FILTER: "name=kaifograd-kaifograd-1"
-      DOZZLE_NO_ANALYTICS: "true"
+    image: docker:27-cli
+    mem_limit: 64m
+    cpus: 0.1
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        while true; do
+          {
+            printf 'HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n'
+            docker logs --tail 200 kaifograd-kaifograd-1 2>&1
+          } | nc -l -p 8080
+        done
     ports:
       - "0.0.0.0:4174:8080"
     volumes:
