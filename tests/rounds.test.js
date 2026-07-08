@@ -42,13 +42,13 @@ test("manual island round has the balloon cat mascot and meme round uses availab
   const islandRound = fullRounds[3];
   const memeRound = fullRounds[5];
   const memeImages = [
-    "assets/мем1.jpeg",
-    "assets/мем2.jpeg",
-    "assets/мем3.jpg",
-    "assets/мем4.jpeg",
-    "assets/мем5.jpeg",
-    "assets/мем6.png",
-    "assets/мем7.png",
+    "assets/mem1.jpeg",
+    "assets/mem2.jpeg",
+    "assets/mem3.jpg",
+    "assets/mem4.jpeg",
+    "assets/mem5.jpeg",
+    "assets/mem6.png",
+    "assets/mem7.png",
   ];
 
   assert.equal(islandRound.image, undefined);

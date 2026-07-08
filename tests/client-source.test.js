@@ -147,7 +147,6 @@ test("host panel is a full control desk without Miro shortcut", async () => {
   assert.match(hostSource, /data-action="next-question"/);
   assert.match(hostSource, /data-action="toggle-pause"/);
   assert.match(hostSource, /data-action="finish-round"/);
-  assert.match(hostSource, /data-action="recount"/);
   assert.match(hostSource, /data-action="toggle-score-editor"/);
   assert.doesNotMatch(hostSource, /Открыть Miro/);
 });

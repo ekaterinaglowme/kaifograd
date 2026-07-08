@@ -765,6 +765,13 @@ button:disabled {
   line-height: 1;
 }
 
+.countdown-cat {
+  display: block;
+  width: clamp(120px, 16vw, 240px);
+  height: auto;
+  margin: 0 auto 12px;
+}
+
 .podium {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

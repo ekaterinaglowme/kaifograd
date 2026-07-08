@@ -52,7 +52,7 @@ test("single team link opens PIN gate and has no team-number selector", async ()
   }
 });
 
-test("PIN 101 opens team 1 and captain can edit name and color before start", async () => {
+test("PIN 101 opens team 1 and captain sets name and color, then sees a confirmation", async () => {
   const server = await startTestServer();
   try {
     await withBrowser(async (browser) => {
@@ -65,16 +65,12 @@ test("PIN 101 opens team 1 and captain can edit name and color before start", as
       await page.locator('[data-action="save-team-setup"]').click();
       await assertVisibleText(page, "Спасибо! Название сохранено");
 
-      let game = await state(server.baseUrl);
+      const game = await state(server.baseUrl);
       assert.equal(game.teams[0].displayName, "UI Команда");
       assert.equal(game.teams[0].color, "#FF5FA2");
 
-      await page.locator('[data-action="edit-team-setup"]').click();
-      await page.locator('[data-field="setup-team-name"]').fill("UI Команда 2");
-      await page.locator('[data-action="save-team-setup"]').click();
-
-      game = await state(server.baseUrl);
-      assert.equal(game.teams[0].displayName, "UI Команда 2");
+      // После сохранения кнопки правки названия/цвета нет — только подтверждение.
+      assert.equal(await page.locator('[data-action="edit-team-setup"]').count(), 0);
     });
   } finally {
     await server.stop();

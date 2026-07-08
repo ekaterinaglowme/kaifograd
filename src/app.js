@@ -495,7 +495,6 @@ function renderHostQuestionActions() {
       ${game.status === "round_running" || game.status === "question_scored" ? `<button class="btn" data-action="next-question">К следующему вопросу</button>` : ""}
       ${game.status === "round_running" ? `<button class="btn secondary" data-action="toggle-pause">${game.paused ? "Продолжить" : "Пауза"}</button>` : ""}
       <button class="btn secondary" data-action="finish-round">Завершить раунд</button>
-      <button class="btn secondary" data-action="recount">Пересчитать вопрос</button>
       <button class="btn secondary" data-action="toggle-score-editor">Поправить баллы</button>
       <button class="btn secondary" data-action="reset-test">Сбросить игру</button>
     </div>
@@ -600,8 +599,7 @@ function renderHostRoundOver() {
         ${renderScoreResult()}
         <div class="actions">
           <button class="btn" data-action="finish-round">Показать итоги 3-2-1</button>
-          <button class="btn secondary" data-action="recount">Пересчитать вопрос</button>
-          <button class="btn secondary" data-action="toggle-score-editor">Поправить баллы</button>
+              <button class="btn secondary" data-action="toggle-score-editor">Поправить баллы</button>
           <button class="btn secondary" data-action="reset-test">Сбросить игру</button>
         </div>
         ${state.scoreEditor ? renderScoreEditor() : ""}
@@ -700,8 +698,7 @@ function renderTeamSaved(team) {
       <div class="panel setup-card team-saved-card" style="--team-color:${team.color}">
         <p class="eyebrow"><span class="swatch"></span> ${safe(team.displayName)}</p>
         <h2>Спасибо! Название сохранено 🎉</h2>
-        <p class="muted">Команда «${safe(team.displayName)}» в игре. Удачи! Ждём, пока ведущая начнёт — экран сам переключится на первый вопрос.</p>
-        <button class="btn secondary" data-action="edit-team-setup">Изменить название или цвет</button>
+        <p class="muted">Команда «${safe(team.displayName)}» в игре. Удачи! Ждём, пока ведущая начнёт игру — экран сам переключится на первый вопрос.</p>
       </div>
     </section>
   `;
@@ -757,12 +754,14 @@ function renderTeamBooting(team) {
 }
 
 function renderTeamActivity(team) {
+  const round = currentRound();
   return html`
     <section class="setup-shell">
       <div class="panel setup-card">
-        <p class="eyebrow">${safe(team.displayName)} · ${safe(currentRound().title)}</p>
+        <p class="eyebrow">${safe(team.displayName)} · ${safe(round.title)}</p>
         <h2>Активность в зале</h2>
         <p class="muted" data-live="team-activity-status">${safe(teamActivityStatusText(team))}</p>
+        ${round.rules ? `<div class="activity-rules"><strong>Правила</strong><span>${safe(round.rules)}</span></div>` : ""}
       </div>
     </section>
   `;
@@ -773,9 +772,11 @@ function renderTeamRoundResults(team) {
     <section class="grid">
       <div class="panel">${renderRoundResults()}</div>
       <div class="panel">
-        <p class="eyebrow">${safe(team.displayName)}</p>
-        <h2>${team.totalScore} ${pointsLabel(team.totalScore)}</h2>
-        <p class="muted">Ждём следующий раунд. Карта Miro остаётся отдельной вкладкой.</p>
+        <div class="panel-title">
+          <h2>Общий счёт</h2>
+          <span class="status">${team.totalScore} ${pointsLabel(team.totalScore)} у вас</span>
+        </div>
+        ${renderBarChart(false)}
       </div>
     </section>
   `;
@@ -899,6 +900,8 @@ function renderScreen() {
       <section class="projector-screen">
         <div class="panel projector-panel">
           ${renderRoundResults()}
+          <div class="panel-title"><h2>Общий счёт</h2></div>
+          ${renderBarChart(false)}
         </div>
       </section>
     `;
@@ -984,7 +987,7 @@ function renderFilmAnswerReview(context = "team") {
 
 function renderRoundCountdown() {
   const count = Math.max(1, game.roundCountdown ?? 3);
-  return `<section class="panel countdown"><div><p class="eyebrow">итоги раунда</p><div class="countdown-number">${count}</div><h2>${safe(currentRound().title)}</h2></div></section>`;
+  return `<section class="panel countdown"><div><img class="countdown-cat" src="assets/loading-cat.png" alt="" onerror="this.remove()" /><p class="eyebrow">итоги раунда</p><div class="countdown-number">${count}</div><h2>${safe(currentRound().title)}</h2></div></section>`;
 }
 
 function renderFinalReveal(mode) {

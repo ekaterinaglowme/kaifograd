@@ -503,7 +503,7 @@ const server = createServer(async (request, response) => {
 
   // Статика
   try {
-    const requested = pathname === "/" ? "/index.html" : pathname;
+    const requested = pathname === "/" ? "/index.html" : decodeURIComponent(pathname);
     const filePath = normalize(join(root, requested));
     if (!filePath.startsWith(root) || filePath === stateFile) throw new Error("Invalid path");
     const data = await readFile(filePath);
