@@ -466,11 +466,21 @@ function sendJson(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
+// Каждый запрос пишем одной строкой в stdout — это то, что видно в логах контейнера
+// (docker logs / вкладка логов на :4174). Помогает ловить, например, 400 на просроченный токен.
+function logRequest(request, status, detail = "") {
+  const ip = request.headers["x-forwarded-for"] || request.socket?.remoteAddress || "-";
+  const method = request.method;
+  const path = request.url;
+  console.log(`${new Date().toISOString()} ${ip} ${method} ${path} ${status}${detail ? ` ${detail}` : ""}`);
+}
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url, `http://${request.headers.host}`);
   const pathname = url.pathname;
 
   if (pathname === "/api/state") {
+    logRequest(request, 200, `view=${url.searchParams.get("view") || "team"}`);
     return sendJson(response, 200, viewerState(clientFromQuery(url)));
   }
 
@@ -482,6 +492,7 @@ const server = createServer(async (request, response) => {
     });
     const client = { res: response, ...clientFromQuery(url) };
     clients.add(client);
+    logRequest(request, 200, `SSE open view=${client.view} team=${client.teamId ?? "-"} clients=${clients.size}`);
     response.write(`data: ${JSON.stringify(viewerState(client))}\n\n`);
     const ping = setInterval(() => {
       try {
@@ -493,19 +504,26 @@ const server = createServer(async (request, response) => {
     request.on("close", () => {
       clearInterval(ping);
       clients.delete(client);
+      logRequest(request, 499, `SSE close view=${client.view} team=${client.teamId ?? "-"} clients=${clients.size}`);
     });
     return;
   }
 
   if (pathname === "/api/action") {
-    if (request.method !== "POST") return sendJson(response, 405, { error: "POST only" });
+    if (request.method !== "POST") {
+      logRequest(request, 405, "action rejected: not POST");
+      return sendJson(response, 405, { error: "POST only" });
+    }
     let action;
     try {
       action = JSON.parse((await readBody(request)) || "{}");
     } catch {
+      logRequest(request, 400, "action rejected: bad JSON");
       return sendJson(response, 400, { error: "Плохой JSON" });
     }
     const result = handleAction(action);
+    const detail = `action=${action?.type || "?"} team=${action?.teamId ?? "-"} ${result.error ? `error="${result.error}"` : "ok"}`;
+    logRequest(request, result.error ? 400 : 200, detail);
     if (result.error) return sendJson(response, 400, result);
     persistSoon();
     broadcast();
@@ -520,9 +538,11 @@ const server = createServer(async (request, response) => {
     const data = await readFile(filePath);
     response.writeHead(200, { "Content-Type": types[extname(filePath)] || "text/plain" });
     response.end(data);
+    logRequest(request, 200);
   } catch {
     response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     response.end("Not found");
+    logRequest(request, 404);
   }
 });
 
