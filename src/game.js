@@ -442,6 +442,32 @@ export function serializeForViewer(game, { seeAllAnswers = false, teamId = null,
     }
   }
   clone.answers = redacted;
+
+  // Безопасность: правильные ответы не отдаём никому, кроме ведущей (seeAllAnswers).
+  // Иначе их видно в консоли разработчика во время игры. На раскрытии кино-раунда
+  // показываем ответ только текущего слайда.
+  const isReview = clone.status === "round_review";
+  const revealIndex = clone.currentReviewIndex || 0;
+  clone.rounds = (clone.rounds || []).map((round, ri) => ({
+    ...round,
+    questions: (round.questions || []).map((q, qi) => {
+      const keepReveal = isReview && ri === clone.currentRoundIndex && qi === revealIndex;
+      const safeQ = { ...q };
+      delete safeQ.correct;
+      delete safeQ.acceptedAnswers;
+      delete safeQ.artist;
+      delete safeQ.title;
+      delete safeQ.artistAccepted;
+      delete safeQ.titleAccepted;
+      if (!keepReveal) {
+        delete safeQ.answer;
+        delete safeQ.answerTitle;
+        delete safeQ.revealImage;
+      }
+      return safeQ;
+    }),
+  }));
+
   return clone;
 }
 

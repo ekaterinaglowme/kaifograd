@@ -87,6 +87,9 @@ async function loadGame() {
     parsed.manualAttempt ||= createManualAttemptState(parsed.rounds?.[parsed.currentRoundIndex]?.durationMs || 60000);
     parsed.manualAttempt.durationMs ||= parsed.rounds?.[parsed.currentRoundIndex]?.durationMs || 60000;
     parsed.manualAttempt.remainingMs ??= parsed.manualAttempt.durationMs;
+    if (parsed.status !== "lobby" && !parsed.teams.some((team) => team.ready)) {
+      return createFreshGame();
+    }
     for (const team of parsed.teams) team.token ||= "";
     return parsed;
   } catch {
@@ -295,6 +298,14 @@ function handleAction(action) {
     if (!team) return { error: "Нет такой команды" };
     if (!team.ready) return { error: "Сначала сохраните название команды" };
     if (team.token && team.token !== action.token) return { error: "Эта команда уже занята на другом устройстве" };
+    // Защита от устаревшего ответа: клиент присылает номер раунда/вопроса. Если из-за
+    // сетевой задержки они не совпадают с текущими — ответ не пишем на чужой вопрос.
+    if (action.roundIndex != null && Number(action.roundIndex) !== game.currentRoundIndex) {
+      return { error: "Вопрос уже сменился" };
+    }
+    if (action.questionIndex != null && Number(action.questionIndex) !== game.currentQuestionIndex) {
+      return { error: "Вопрос уже сменился" };
+    }
     submitAnswer(game, team.id, action.value);
     return { ok: true };
   }

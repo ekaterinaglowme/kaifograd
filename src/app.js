@@ -878,8 +878,8 @@ function renderScreen() {
       <section class="projector-screen">
         <div class="panel projector-panel">
           <div class="question projector-question projector-welcome">
-            <h2 class="projector-round-title">Игра скоро начнётся 🎉</h2>
-            <h2 class="projector-prompt">Дорогие прекрасные коллеги, садитесь поудобнее и приготовьтесь кайфовать!</h2>
+            <h2 class="projector-round-title">Игра скоро начнётся</h2>
+            <h2 class="projector-prompt">Коллеги, садитесь поудобнее, занимайте места и готовьтесь строить Кайфоград.</h2>
             <p class="projector-meta">Команд в игре: ${readyTeams().length}</p>
           </div>
         </div>
@@ -1224,7 +1224,14 @@ function renderBarChart(useRound = true) {
 
 async function submitCurrentAnswer(value) {
   if (!game || game.status !== "round_running" || isManualRound()) return;
-  await postAction({ type: "submitAnswer", teamId: state.selectedTeamId, token: currentTeamToken(), value });
+  await postAction({
+    type: "submitAnswer",
+    teamId: state.selectedTeamId,
+    token: currentTeamToken(),
+    value,
+    roundIndex: game.currentRoundIndex,
+    questionIndex: game.currentQuestionIndex,
+  });
 }
 
 function confirmDangerousAction(action) {

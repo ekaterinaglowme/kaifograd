@@ -338,6 +338,29 @@ test("text answers tolerate small typos via Levenshtein distance", () => {
   assert.equal(game.teams[2].totalScore, 0);
 });
 
+test("serializeForViewer hides correct answers from non-host viewers", () => {
+  const game = createGame({ teamCount: 2 });
+  game.rounds[0].questions = [
+    { type: "choice", prompt: "?", options: ["A", "B"], correct: "B" },
+    { type: "text", prompt: "?", answer: "Матрица", acceptedAnswers: ["матрица"] },
+  ];
+  registerTeam(game, 1, { name: "X", color: "#4CC9F0" });
+  game.teams[0].token = "t1";
+
+  const teamView = serializeForViewer(game, { teamId: 1, teamToken: "t1" });
+  assert.equal(teamView.rounds[0].questions[0].correct, undefined);
+  assert.deepEqual(teamView.rounds[0].questions[0].options, ["A", "B"]);
+  assert.equal(teamView.rounds[0].questions[1].answer, undefined);
+  assert.equal(teamView.rounds[0].questions[1].acceptedAnswers, undefined);
+
+  const screenView = serializeForViewer(game, {});
+  assert.equal(screenView.rounds[0].questions[0].correct, undefined);
+
+  const hostView = serializeForViewer(game, { seeAllAnswers: true });
+  assert.equal(hostView.rounds[0].questions[0].correct, "B");
+  assert.equal(hostView.rounds[0].questions[1].answer, "Матрица");
+});
+
 test("serializeForViewer hides other teams answers from a team viewer", () => {
   const game = createGame({ teamCount: 3 });
   submitAnswer(game, 1, "A");

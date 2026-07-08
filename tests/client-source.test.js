@@ -97,7 +97,10 @@ test("team client stores and sends a private team token", async () => {
   assert.match(source, /teamTokenKey/);
   assert.match(source, /currentTeamToken/);
   assert.match(source, /sessionStorage\.setItem\(teamTokenKey/);
-  assert.match(source, /type: "submitAnswer", teamId: state\.selectedTeamId, token: currentTeamToken\(\), value/);
+  assert.match(source, /type: "submitAnswer"/);
+  assert.match(source, /token: currentTeamToken\(\)/);
+  assert.match(source, /roundIndex: game\.currentRoundIndex/);
+  assert.match(source, /questionIndex: game\.currentQuestionIndex/);
 });
 
 test("team client has a locked occupied-team state", async () => {

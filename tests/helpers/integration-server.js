@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
@@ -7,9 +7,12 @@ import { spawn } from "node:child_process";
 export const nodeBin = process.execPath;
 export const projectRoot = new URL("../..", import.meta.url).pathname;
 
-export async function startTestServer({ port = 0 } = {}) {
+export async function startTestServer({ port = 0, initialState = null } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "kaifograd-test-"));
   const stateFile = join(dir, "game-state.json");
+  if (initialState) {
+    await writeFile(stateFile, JSON.stringify(initialState, null, 2));
+  }
   const child = spawn(nodeBin, ["server.js"], {
     cwd: projectRoot,
     env: {

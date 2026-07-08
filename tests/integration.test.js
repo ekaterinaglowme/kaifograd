@@ -26,6 +26,40 @@ test("server uses an isolated temporary game-state file", async () => {
   }
 });
 
+test("server resets stale round results when no teams are registered", async () => {
+  const server = await startTestServer({
+    initialState: {
+      status: "round_results",
+      currentRoundIndex: 0,
+      currentQuestionIndex: 6,
+      teams: Array.from({ length: 6 }, (_, index) => ({
+        id: index + 1,
+        slotName: `Команда ${index + 1}`,
+        displayName: `Команда ${index + 1}`,
+        name: "",
+        captain: "",
+        color: "#FF5FA2",
+        ready: false,
+        online: false,
+        roundScore: 0,
+        totalScore: 0,
+      })),
+      answers: {},
+      questionScores: {},
+      roundResults: [{ roundIndex: 0, winners: [], roundScores: [] }],
+      cityResources: [],
+    },
+  });
+  try {
+    const game = await state(server.baseUrl, "view=screen");
+
+    assert.equal(game.status, "lobby");
+    assert.equal(game.roundResults.length, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("team PINs 101-106 identify teams and invalid PIN is rejected", async () => {
   const server = await startTestServer();
   try {
@@ -211,6 +245,62 @@ test("a team interacts correctly across choice, film and manual rounds", async (
     // Приватность на боевом раунде: команда видит только свой ответ.
     const teamView = await state(server.baseUrl, `view=team&team=1&token=${encodeURIComponent(login.token)}`);
     assert.equal(teamView.viewer.teamAccess, true);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("stale answer with a mismatched round/question index is rejected", async () => {
+  const server = await startTestServer();
+  try {
+    await action(server.baseUrl, { type: "reset", code: "0306" });
+    const login = await loginAndJoin(server.baseUrl, "101", { name: "Тест", color: "#FF5FA2" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+
+    const stale = await actionMayFail(server.baseUrl, {
+      type: "submitAnswer",
+      teamId: 1,
+      token: login.token,
+      value: "B",
+      roundIndex: 0,
+      questionIndex: 5,
+    });
+    assert.equal(stale.ok, false);
+    assert.match(stale.body.error, /сменился/i);
+
+    const fresh = await action(server.baseUrl, {
+      type: "submitAnswer",
+      teamId: 1,
+      token: login.token,
+      value: "B",
+      roundIndex: 0,
+      questionIndex: 0,
+    });
+    assert.equal(fresh.ok, true);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("state responses never contain correct answers for team or observer viewers", async () => {
+  const server = await startTestServer();
+  try {
+    await action(server.baseUrl, { type: "reset", code: "0306" });
+    const login = await loginAndJoin(server.baseUrl, "101", { name: "Тест", color: "#FF5FA2" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+
+    const teamRaw = JSON.stringify(
+      await state(server.baseUrl, `view=team&team=1&token=${encodeURIComponent(login.token)}`),
+    );
+    const screenRaw = JSON.stringify(await state(server.baseUrl, "view=screen"));
+    for (const raw of [teamRaw, screenRaw]) {
+      assert.doesNotMatch(raw, /"correct"/);
+      assert.doesNotMatch(raw, /"acceptedAnswers"/);
+      assert.doesNotMatch(raw, /"answerTitle"/);
+    }
+
+    const hostRaw = JSON.stringify(await state(server.baseUrl, "view=host&code=0306"));
+    assert.match(hostRaw, /"correct"/);
   } finally {
     await server.stop();
   }

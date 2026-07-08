@@ -201,6 +201,48 @@ test("observer shows round countdown/results without admin controls", async () =
   }
 });
 
+test("observer shows a welcome message before the game starts", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      const page = await newPage(browser, server.baseUrl, "/?view=screen");
+
+      await assertVisibleText(page, "Игра скоро начнётся");
+      await assertVisibleText(page, "Коллеги, садитесь поудобнее");
+      await assertVisibleText(page, "занимайте места");
+      await assertVisibleText(page, "Команд в игре: 0");
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("team and observer both see total score after each round", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      const team = await loginAndJoin(server.baseUrl, "101", { name: "Счётчики", color: "#FF5FA2" });
+      const teamPage = await newPage(browser, server.baseUrl, `/?view=team&team=1`);
+      await teamPage.evaluate((token) => {
+        sessionStorage.setItem("kaifogradTeamId", "1");
+        sessionStorage.setItem("kaifogradTeamToken:1", token);
+      }, team.token);
+      await teamPage.reload();
+      const observerPage = await newPage(browser, server.baseUrl, "/?view=screen");
+
+      await action(server.baseUrl, { type: "startRound", code: "0306" });
+      for (let i = 0; i < 7; i += 1) await action(server.baseUrl, { type: "nextQuestion", code: "0306" });
+      await action(server.baseUrl, { type: "finishRound", code: "0306" });
+      await waitForState(server.baseUrl, (game) => game.status === "round_results");
+
+      await assertVisibleText(teamPage, "Общий счёт");
+      await assertVisibleText(observerPage, "Общий счёт");
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
 test("main views fit desktop and mobile viewports without horizontal overflow", async () => {
   const server = await startTestServer();
   try {
