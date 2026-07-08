@@ -969,10 +969,18 @@ function renderProjectorTimer() {
 
 function renderFilmAnswerReview(context = "team") {
   const q = currentReviewQuestion();
-  const index = (game.currentReviewIndex || 0) + 1;
+  const reviewIndex = game.currentReviewIndex || 0;
+  const index = reviewIndex + 1;
   const total = currentRound().questions.length;
   const image = q.revealImage || q.image || "";
   const title = q.answerTitle || q.answer || "Правильный ответ";
+  const scored = game?.questionScores?.[`${game.currentRoundIndex}:${reviewIndex}`];
+  const guessers = (scored?.correctTeamIds || [])
+    .map((id) => game.teams.find((team) => team.id === id)?.displayName)
+    .filter(Boolean);
+  const guessersBlock = guessers.length
+    ? `<div class="film-review-guessers"><strong>Угадали:</strong> ${guessers.map(safe).join(", ")}</div>`
+    : `<div class="film-review-guessers muted">Никто не угадал</div>`;
   return html`
     <div class="film-review ${context === "projector" ? "projector-review" : ""}">
       <p class="eyebrow">ответ ${index}/${total}</p>
@@ -980,6 +988,7 @@ function renderFilmAnswerReview(context = "team") {
       <div class="film-review-title">
         <span>Правильный ответ</span>
         <h2>${safe(title)}</h2>
+        ${guessersBlock}
       </div>
     </div>
   `;

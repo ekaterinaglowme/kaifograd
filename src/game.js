@@ -90,10 +90,42 @@ function normalizedAccepted(rawAnswers) {
     .filter(Boolean);
 }
 
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let curr = new Array(n + 1);
+  for (let i = 1; i <= m; i += 1) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+// Средняя строгость: прощаем опечатки по длине слова (≤5 → 1, 6–10 → 2, >10 → 3).
+function fuzzyThreshold(len) {
+  if (len < 4) return 0;
+  if (len <= 5) return 1;
+  if (len <= 10) return 2;
+  return 3;
+}
+
 function matchesAccepted(value, rawAnswers) {
   const normalized = normalizeText(value);
   if (!normalized) return false;
-  return normalizedAccepted(rawAnswers).some((accepted) => normalized === accepted || (accepted.length >= 4 && normalized.includes(accepted)));
+  return normalizedAccepted(rawAnswers).some((accepted) => {
+    if (normalized === accepted) return true;
+    if (accepted.length >= 4 && normalized.includes(accepted)) return true;
+    const threshold = fuzzyThreshold(accepted.length);
+    return threshold > 0 && levenshtein(normalized, accepted) <= threshold;
+  });
 }
 
 function acceptedTextAnswers(question) {

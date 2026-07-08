@@ -1076,6 +1076,16 @@ button:disabled {
   max-height: min(58vh, 620px);
 }
 
+.film-review-guessers {
+  margin-top: 14px;
+  font-weight: 500;
+  font-size: clamp(16px, 1.8vw, 26px);
+}
+
+.film-review-guessers.muted {
+  color: var(--muted);
+}
+
 .projector-review .film-review-title {
   margin-top: -4px;
   gap: 2px;

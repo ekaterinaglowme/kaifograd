@@ -323,6 +323,21 @@ test("song questions score artist and title fields separately", () => {
   assert.deepEqual(result.correctTeamIds.slice().sort(), [1, 2]);
 });
 
+test("text answers tolerate small typos via Levenshtein distance", () => {
+  const game = createGame({ teamCount: 4 });
+  game.currentRoundIndex = 2;
+  game.rounds[2].questions = [{ type: "text", prompt: "Что за место?", answer: "Матрица / The Matrix" }];
+  submitAnswer(game, 1, "матриса");
+  submitAnswer(game, 2, "the matrx");
+  submitAnswer(game, 3, "корабль");
+  submitAnswer(game, 4, "Матрица");
+
+  const result = scoreCurrentQuestion(game);
+
+  assert.deepEqual(result.correctTeamIds.slice().sort(), [1, 2, 4]);
+  assert.equal(game.teams[2].totalScore, 0);
+});
+
 test("serializeForViewer hides other teams answers from a team viewer", () => {
   const game = createGame({ teamCount: 3 });
   submitAnswer(game, 1, "A");
