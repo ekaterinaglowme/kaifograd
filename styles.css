@@ -818,6 +818,9 @@ button:disabled {
   opacity: 0;
   pointer-events: none;
   z-index: 45;
+  /* белый фон картинки читается как аккуратный стикер */
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(32, 32, 37, 0.18);
   transition: transform 0.5s linear, opacity 0.4s ease;
   will-change: transform, opacity;
 }

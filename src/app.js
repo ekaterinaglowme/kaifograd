@@ -400,7 +400,7 @@ function updateCountdownCat() {
 }
 
 function renderCountdownCat() {
-  return `<img class="countdown-cat-overlay" data-countdown-cat src="assets/countdown-cat.png" alt="" aria-hidden="true" onerror="this.remove()" />`;
+  return `<img class="countdown-cat-overlay" data-countdown-cat src="assets/countdown-cat.jpg" alt="" aria-hidden="true" onerror="this.remove()" />`;
 }
 
 function updateRunawayButtons() {
