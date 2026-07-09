@@ -455,7 +455,7 @@ test("serializeForViewer flags a stale team token after the game is reset", () =
   assert.equal(serializeForViewer(game, { seeAllAnswers: true }).viewer.tokenStale, false);
 });
 
-test("serializeForViewer reveals round answers on results only for revealAnswers rounds", () => {
+test("serializeForViewer reveals the finished round's answers on results", () => {
   const game = createGame({ teamCount: 2 });
   game.status = "round_results";
   game.currentRoundIndex = 0;
@@ -479,13 +479,34 @@ test("serializeForViewer reveals round answers on results only for revealAnswers
   assert.equal(teamView.reveals["0:0"].title, "Where Is My Mind?");
   assert.equal("artistAccepted" in teamView.reveals["0:0"], false);
   assert.equal(teamView.reveals["0:1"].answer, "Чипи чапа");
-  // Раунд без revealAnswers — его ответов в reveals нет.
+  // Раскрывается только завершённый (текущий) раунд — не следующий.
   assert.equal("1:0" in teamView.reveals, false);
 
   // До итогов (round_running) reveals пуст даже у revealAnswers-раунда.
   game.status = "round_running";
   const running = serializeForViewer(game, { teamId: 1 });
   assert.deepEqual(running.reveals, {});
+});
+
+test("on results a plain round reveals correct choice and number answers", () => {
+  const game = createGame({ teamCount: 2 });
+  game.status = "round_results";
+  game.currentRoundIndex = 0;
+  // Обычный раунд без revealAnswers, с вопросами на выбор и число.
+  game.rounds[0].revealAnswers = false;
+  game.rounds[0].questions = [
+    { type: "choice", prompt: "?", options: ["Done", "In Progress", "На согласовании", "Почти готово"], correct: "B" },
+    { type: "number", prompt: "?", correct: 4500 },
+  ];
+
+  const teamView = serializeForViewer(game, { teamId: 1 });
+  // Правильный вариант выбора приходит читаемой строкой (буква + текст), а сам текст вопроса
+  // остаётся без поля correct.
+  assert.equal(teamView.reveals["0:0"].answer, "B. In Progress");
+  assert.equal("correct" in teamView.rounds[0].questions[0], false);
+  assert.equal(teamView.reveals["0:1"].answer, "4500");
+  // Матчинг/правильный вариант не утекают наружу как ключи.
+  assert.doesNotMatch(JSON.stringify(teamView.reveals), /"correct"|"acceptedAnswers"/);
 });
 
 test("serializeLive omits question texts but keeps dynamic state and reveals", () => {

@@ -805,6 +805,27 @@ button:disabled {
   border-radius: 16px;
 }
 
+/* Кот-«время вышло»: появляется за 5 секунд до конца и плавно растёт в углу экрана.
+   pointer-events: none — оверлей НИКОГДА не перехватывает нажатия по вариантам ответа. */
+.countdown-cat-overlay {
+  position: fixed;
+  right: clamp(8px, 2vw, 28px);
+  bottom: clamp(8px, 2vw, 28px);
+  width: clamp(96px, 13vw, 190px);
+  height: auto;
+  transform: scale(0.5);
+  transform-origin: bottom right;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 45;
+  transition: transform 0.5s linear, opacity 0.4s ease;
+  will-change: transform, opacity;
+}
+
+.countdown-cat-overlay.is-visible {
+  opacity: 1;
+}
+
 .lobby-office {
   display: block;
   width: min(100%, 640px);

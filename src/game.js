@@ -477,8 +477,9 @@ function serializeBase(game, { seeAllAnswers = false, teamId = null, teamToken =
   return clone;
 }
 
-// Правильные ответы, которые сейчас можно показать не-ведущей. Всё остальное (correct,
-// матчинг) не отдаём никогда — иначе видно в консоли во время игры.
+// Правильные ответы, которые сейчас можно показать не-ведущей: текущий слайд кино-ревью и
+// ответы ЗАВЕРШЁННОГО раунда на его итогах (раунд уже закончился — показывать безопасно).
+// Во время самого вопроса (round_running) не отдаём ничего — иначе видно в консоли.
 function computeReveals(game) {
   const reveals = {};
   const cri = game.currentRoundIndex;
@@ -488,23 +489,41 @@ function computeReveals(game) {
     const qi = game.currentReviewIndex || 0;
     const q = round.questions?.[qi];
     if (q) reveals[`${cri}:${qi}`] = pickReveal(q, { image: true });
-  } else if (game.status === "round_results" && round.revealAnswers) {
+  } else if (game.status === "round_results") {
+    // На итогах показываем правильные ответы КАЖДОГО раунда, а не только мемов/песен.
     (round.questions || []).forEach((q, qi) => {
-      reveals[`${cri}:${qi}`] = pickReveal(q, { song: true });
+      const reveal = resultReveal(q);
+      if (Object.keys(reveal).length) reveals[`${cri}:${qi}`] = reveal;
     });
   }
   return reveals;
 }
 
-function pickReveal(q, { image = false, song = false } = {}) {
+// Готовый к показу правильный ответ по типу вопроса (для итогов раунда).
+function resultReveal(q) {
+  if (q.type === "choice") {
+    const idx = "ABCD".indexOf(String(q.correct ?? "").toUpperCase());
+    const optionText = idx >= 0 ? q.options?.[idx] : undefined;
+    return optionText != null ? { answer: `${q.correct}. ${optionText}` } : {};
+  }
+  if (q.type === "number") {
+    return q.correct != null ? { answer: String(q.correct) } : {};
+  }
+  if (q.type === "song") {
+    const out = {};
+    if (q.artist != null) out.artist = q.artist;
+    if (q.title != null) out.title = q.title;
+    return out;
+  }
+  const answer = q.answerTitle ?? q.answer;
+  return answer != null ? { answer } : {};
+}
+
+function pickReveal(q, { image = false } = {}) {
   const out = {};
   if (q.answer != null) out.answer = q.answer;
   if (q.answerTitle != null) out.answerTitle = q.answerTitle;
   if (image && q.revealImage != null) out.revealImage = q.revealImage;
-  if (song) {
-    if (q.artist != null) out.artist = q.artist;
-    if (q.title != null) out.title = q.title;
-  }
   return out;
 }
 
