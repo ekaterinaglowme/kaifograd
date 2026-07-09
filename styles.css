@@ -208,12 +208,24 @@ h1 {
 .option.runaway-option {
   position: relative;
   z-index: 2;
-  transform: translate(var(--runaway-x, 0), var(--runaway-y, 0));
   transition:
-    transform 160ms ease,
+    transform 120ms ease,
     background 160ms ease,
     box-shadow 160ms ease;
   will-change: transform;
+}
+
+/* В «полёте» кнопка вырывается из сетки и прыгает по всему окну. */
+.option.runaway-flying {
+  position: fixed;
+  left: 0;
+  top: 0;
+  margin: 0;
+  z-index: 60;
+  transform: translate(var(--runaway-x, 40vw), var(--runaway-y, 60vh));
+  transition:
+    transform 120ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 160ms ease;
 }
 
 .option.runaway-locked {
@@ -223,18 +235,6 @@ h1 {
 
 .option.runaway-catchable {
   background: var(--accent-2);
-}
-
-.runaway-badge {
-  display: inline-grid;
-  width: 28px;
-  height: 28px;
-  margin-left: 8px;
-  place-items: center;
-  border-radius: 999px;
-  background: #fff;
-  font-size: 14px;
-  font-weight: 900;
 }
 
 .rounds-strip {
@@ -758,6 +758,24 @@ button:disabled {
   text-align: center;
 }
 
+.countdown-layout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(32px, 8vw, 120px);
+  width: 100%;
+}
+
+.countdown-layout .countdown-cat {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.countdown-body {
+  flex: 0 1 auto;
+  text-align: center;
+}
+
 .countdown-number {
   color: var(--accent);
   font-size: clamp(110px, 20vw, 260px);
@@ -770,6 +788,13 @@ button:disabled {
   width: clamp(120px, 16vw, 240px);
   height: auto;
   margin: 0 auto 12px;
+}
+
+@media (max-width: 640px) {
+  .countdown-layout {
+    flex-direction: column;
+    gap: 16px;
+  }
 }
 
 .listen-cat {
@@ -786,6 +811,47 @@ button:disabled {
   height: auto;
   margin: 0 auto 20px;
   border-radius: 18px;
+}
+
+.lobby-layout {
+  display: flex;
+  align-items: center;
+  gap: clamp(20px, 3vw, 44px);
+}
+
+.lobby-layout .lobby-office {
+  flex: 0 0 auto;
+  width: min(46%, 560px);
+  margin: 0;
+}
+
+.lobby-layout .lobby-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.projector-welcome .lobby-text .projector-round-title {
+  font-size: clamp(28px, 3vw, 44px);
+}
+
+.projector-welcome .lobby-text .projector-prompt {
+  margin-top: 12px;
+  font-size: clamp(19px, 1.8vw, 28px);
+  line-height: 1.15;
+}
+
+.projector-welcome .lobby-text .projector-meta {
+  margin: 14px 0 0;
+}
+
+@media (max-width: 760px) {
+  .lobby-layout {
+    flex-direction: column;
+  }
+
+  .lobby-layout .lobby-office {
+    width: min(100%, 420px);
+  }
 }
 
 .song-note {

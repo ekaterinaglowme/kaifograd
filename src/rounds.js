@@ -19,7 +19,7 @@ export const fullRounds = [
         options: ["Done", "In Progress", "На согласовании", "Почти готово"],
         correct: "D",
         runawayOption: "D",
-        runawayDelayMs: 7000,
+        runawayDelayMs: 15000,
       },
       {
         type: "choice",

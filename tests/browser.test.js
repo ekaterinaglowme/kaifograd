@@ -116,7 +116,7 @@ test("host sees a team immediately after PIN login before setup is saved", async
   }
 });
 
-test("warmup runaway answer cannot be submitted for 7 seconds, then submits", async () => {
+test("warmup runaway answer cannot be submitted for 15 seconds, then submits", async () => {
   const server = await startTestServer();
   try {
     await withBrowser(async (browser) => {
@@ -128,6 +128,9 @@ test("warmup runaway answer cannot be submitted for 7 seconds, then submits", as
       await action(server.baseUrl, { type: "startRound", code: "0306" });
       await action(server.baseUrl, { type: "nextQuestion", code: "0306" });
       await waitForState(server.baseUrl, (game) => game.currentRoundIndex === 0 && game.currentQuestionIndex === 1);
+      // Ставим на паузу, чтобы 20-секундный таймер вопроса не увёл его дальше, пока ждём 15 секунд;
+      // счётчик «убегания» на клиенте всё равно идёт по реальному времени и разблокирует ответ.
+      await action(server.baseUrl, { type: "togglePause", code: "0306" });
       await page.reload();
       await page.locator('[data-runaway-answer="D"]').waitFor({ state: "visible" });
 
@@ -135,12 +138,62 @@ test("warmup runaway answer cannot be submitted for 7 seconds, then submits", as
       let game = await state(server.baseUrl);
       assert.equal(game.answers["0:1"], undefined);
 
-      await page.waitForTimeout(7300);
+      await page.waitForTimeout(15300);
       await page.locator('[data-runaway-answer="D"]').click();
       await page.locator(".score-result").getByText("Ответ принят", { exact: true }).waitFor({ state: "visible" });
 
       game = await state(server.baseUrl);
       assert.equal(game.answers["0:1"][1].value, "D");
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: на втором вопросе разминки вариант «Почти готово» убегает. Пока идёт отсчёт,
+// на кнопке нет ничего, кроме названия ответа, и при приближении курсора она отпрыгивает
+// в другую точку всего экрана (position: fixed), а не топчется в своей ячейке.
+test("runaway answer shows only its label and jumps across the whole screen while locked", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      const team = await loginAndJoin(server.baseUrl, "101", { name: "Догоняшки", color: "#FF5FA2" });
+      await action(server.baseUrl, { type: "startRound", code: "0306" }); // вопрос 1 — без убегания
+
+      // Готовим страницу заранее, пока идёт первый вопрос. Тогда к моменту появления убегающей
+      // кнопки её 15-секундный счётчик только начинается — и медленное окружение не съедает
+      // окно (счётчик «убегания» на клиенте идёт по реальному времени, пауза его не морозит).
+      const page = await newPage(browser, server.baseUrl, "/?view=team&team=1");
+      await page.evaluate((token) => {
+        sessionStorage.setItem("kaifogradTeamId", "1");
+        sessionStorage.setItem("kaifogradTeamToken:1", token);
+      }, team.token);
+      await page.reload();
+      await page.locator('[data-answer="A"]').first().waitFor({ state: "visible" });
+
+      // Переходим на вопрос 2 (с убегающей кнопкой) и сразу замораживаем таймер вопроса.
+      await action(server.baseUrl, { type: "nextQuestion", code: "0306" });
+      await action(server.baseUrl, { type: "togglePause", code: "0306" });
+
+      const btn = page.locator('[data-runaway-answer="D"]');
+      await btn.waitFor({ state: "visible" });
+      assert.equal((await btn.innerText()).trim(), "D. Почти готово");
+
+      // Несколько раз подводим курсор — кнопка каждый раз отпрыгивает в новую точку экрана.
+      const before = await btn.boundingBox();
+      let flew = false;
+      let maxJump = 0;
+      for (let i = 0; i < 3; i += 1) {
+        const box = await btn.boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.waitForTimeout(120);
+        if ((await btn.evaluate((el) => getComputedStyle(el).position)) === "fixed") flew = true;
+        const after = await btn.boundingBox();
+        maxJump = Math.max(maxJump, Math.hypot(after.x - before.x, after.y - before.y));
+      }
+      // Главный признак «по всему экрану» — кнопка вырвалась из сетки в position: fixed.
+      assert.ok(flew, "кнопка вырвалась из сетки (position: fixed)");
+      assert.ok(maxJump > 100, `кнопка отпрыгнула далеко (макс сдвиг ${Math.round(maxJump)}px)`);
     });
   } finally {
     await server.stop();
@@ -211,6 +264,61 @@ test("observer shows a welcome message before the game starts", async () => {
       await assertVisibleText(page, "Коллеги, садитесь поудобнее");
       await assertVisibleText(page, "занимайте места");
       await assertVisibleText(page, "Команд в игре: 0");
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: до старта игры наблюдающий на большом экране (проекторе) видит слева
+// картинку офиса, а справа от неё — текст «Игра скоро начнётся» уменьшенным шрифтом.
+// На узком (мобильном) экране блоки складываются в столбик, чтобы ничего не сжималось.
+test("observer welcome screen puts the image left and smaller text right on a wide screen", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      const page = await newPage(browser, server.baseUrl, "/?view=screen");
+      await assertVisibleText(page, "Игра скоро начнётся");
+
+      const image = await page.locator(".lobby-layout .lobby-office").boundingBox();
+      const text = await page.locator(".lobby-layout .lobby-text").boundingBox();
+      assert.ok(image && text, "на экране ожидания есть и картинка, и текстовый блок");
+      // Картинка целиком левее текста, и они на одной высоте (рядом, а не друг под другом).
+      assert.ok(image.x + image.width <= text.x, "картинка стоит слева от текста");
+      assert.ok(text.y < image.y + image.height, "текст стоит рядом с картинкой, а не под ней");
+
+      // Заголовок уменьшен: раньше на этой ширине он был бы ~51px (4vw), теперь заметно меньше.
+      const titleSize = await page
+        .locator(".projector-welcome .projector-round-title")
+        .evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+      assert.ok(titleSize <= 44, `заголовок стал меньше (сейчас ${titleSize}px)`);
+
+      // На мобильной ширине — столбик: картинка сверху, текст снизу.
+      await page.setViewportSize({ width: 375, height: 812 });
+      const mobileImage = await page.locator(".lobby-layout .lobby-office").boundingBox();
+      const mobileText = await page.locator(".lobby-layout .lobby-text").boundingBox();
+      assert.ok(mobileImage.y + mobileImage.height <= mobileText.y + 1, "на телефоне текст уходит под картинку");
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: в Miro-вкладке карточки ресурсов идут так, что «Театр» стоит перед «Счастьем
+// жителей» (их поменяли местами относительно исходного порядка раундов).
+test("miro tab shows the Театр card before the Счастье жителей card", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      const page = await newPage(browser, server.baseUrl, "/?view=city");
+      await page.locator(".city-map .district").first().waitFor({ state: "visible" });
+
+      const names = await page.locator(".city-map .district strong").allInnerTexts();
+      const teatr = names.indexOf("Театр");
+      const happiness = names.indexOf("Счастье жителей");
+
+      assert.ok(teatr >= 0 && happiness >= 0, "обе карточки на месте");
+      assert.ok(teatr < happiness, `Театр (${teatr}) стоит раньше Счастья жителей (${happiness})`);
     });
   } finally {
     await server.stop();
