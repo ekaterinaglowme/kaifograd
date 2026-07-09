@@ -13,6 +13,7 @@ import {
   awardManualRoundWinnerByPin,
   getQuestionDurationMs,
   serializeForViewer,
+  serializeLive,
   teamIdForPin,
   updateTeamSetup,
 } from "./src/game.js";
@@ -114,15 +115,28 @@ function persistSoon() {
 
 const clients = new Set();
 
+function clientOptions(client) {
+  return {
+    seeAllAnswers: client.view === "host" && client.code === hostCode,
+    teamId: client.teamId,
+    teamToken: client.teamToken,
+  };
+}
+
+// Полный снимок с текстами вопросов — для /api/state и первого кадра стрима.
 function viewerState(client) {
-  const seeAllAnswers = client.view === "host" && client.code === hostCode;
-  return serializeForViewer(game, { seeAllAnswers, teamId: client.teamId, teamToken: client.teamToken });
+  return serializeForViewer(game, clientOptions(client));
+}
+
+// Лёгкое обновление без текстов вопросов — для рассылки на каждое действие.
+function liveState(client) {
+  return serializeLive(game, clientOptions(client));
 }
 
 function broadcast() {
   for (const client of clients) {
     try {
-      client.res.write(`data: ${JSON.stringify(viewerState(client))}\n\n`);
+      client.res.write(`data: ${JSON.stringify(liveState(client))}\n\n`);
     } catch {
       clients.delete(client);
     }
@@ -455,11 +469,29 @@ setInterval(() => {
   }
 }, 500);
 
+// Строки от участников ограничены 150 символами, поэтому любой честный запрос — это
+// сотни байт. 4 КБ с огромным запасом хватает; всё, что больше, обрываем, не читая до конца,
+// чтобы гигантский JSON не заморозил игру на разборе.
+const maxBodyBytes = 4096;
+
 function readBody(request) {
-  return new Promise((resolve) => {
-    let data = "";
-    request.on("data", (chunk) => (data += chunk));
-    request.on("end", () => resolve(data));
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    const onData = (chunk) => {
+      size += chunk.length;
+      if (size > maxBodyBytes) {
+        // Перестаём копить тело (поток встаёт на паузу), но соединение не рвём —
+        // чтобы ответ 413 успел уйти клиенту. Остаток тела Node отбросит сам.
+        request.removeListener("data", onData);
+        reject(new Error("body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    };
+    request.on("data", onData);
+    request.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    request.on("error", () => reject(new Error("read error")));
   });
 }
 
@@ -525,9 +557,19 @@ const server = createServer(async (request, response) => {
       logRequest(request, 405, "action rejected: not POST");
       return sendJson(response, 405, { error: "POST only" });
     }
+    let raw;
+    try {
+      raw = await readBody(request);
+    } catch (error) {
+      const tooBig = /too large/.test(error.message);
+      logRequest(request, tooBig ? 413 : 400, `action rejected: ${tooBig ? "body too large" : "read error"}`);
+      return sendJson(response, tooBig ? 413 : 400, {
+        error: tooBig ? "Запрос слишком большой" : "Не получилось прочитать запрос",
+      });
+    }
     let action;
     try {
-      action = JSON.parse((await readBody(request)) || "{}");
+      action = JSON.parse(raw || "{}");
     } catch {
       logRequest(request, 400, "action rejected: bad JSON");
       return sendJson(response, 400, { error: "Плохой JSON" });

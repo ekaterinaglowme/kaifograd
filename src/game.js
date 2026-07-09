@@ -22,6 +22,27 @@ export const TEAM_PINS = Object.freeze({
 
 export const QUESTION_DURATION_MS = 45000;
 
+// Любая строка от участника (название команды, капитан, ответ) не длиннее 150 символов.
+// Защищает от того, чтобы кто-то прислал огромный текст и раздул состояние игры/трафик.
+export const MAX_TEXT_LEN = 150;
+
+function capText(value) {
+  return String(value ?? "").slice(0, MAX_TEXT_LEN);
+}
+
+// Приводит ответ к безопасному виду: строку обрезаем до 150 символов, ответ-песню
+// оставляем только с полями artist/title (тоже по 150), всё лишнее отбрасываем.
+function capAnswerValue(value) {
+  if (typeof value === "string") return value.slice(0, MAX_TEXT_LEN);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const capped = {};
+    if (value.artist != null) capped.artist = capText(value.artist);
+    if (value.title != null) capped.title = capText(value.title);
+    return capped;
+  }
+  return value;
+}
+
 export const ROUNDS = [
   {
     title: "У меня работает",
@@ -203,10 +224,10 @@ export function registerTeam(game, teamId, { name = "", color, captain = "" } = 
   const team = teamById(game, teamId);
   const colorTaken = game.teams.some((item) => item.id !== teamId && item.ready && item.color === color);
   if (color && colorTaken) throw new Error("Color already taken");
-  team.name = name.trim();
+  team.name = capText(name).trim().slice(0, MAX_TEXT_LEN);
   team.displayName = team.name || team.slotName;
-  team.color = color || team.color;
-  team.captain = captain.trim();
+  team.color = color ? capText(color) : team.color;
+  team.captain = capText(captain).trim().slice(0, MAX_TEXT_LEN);
   team.ready = true;
   team.online = true;
   return team;
@@ -228,7 +249,7 @@ export function submitAnswer(game, teamId, value) {
   if (!game.answers[key]) game.answers[key] = {};
   game.answers[key][teamId] = {
     teamId,
-    value,
+    value: capAnswerValue(value),
     submittedAt: new Date().toISOString(),
   };
   return game.answers[key][teamId];
@@ -416,8 +437,12 @@ export function advanceAfterQuestionScore(game, { now = Date.now() } = {}) {
   return game.status;
 }
 
-export function serializeForViewer(game, { seeAllAnswers = false, teamId = null, teamToken = "" } = {}) {
-  const clone = structuredClone(game);
+// Динамическая часть состояния (без тяжёлых текстов вопросов). Это то, что летит в
+// стриме на каждое действие: статусы, счёт, ответы, таймеры, viewer и маленькие reveals.
+function serializeBase(game, { seeAllAnswers = false, teamId = null, teamToken = "" } = {}) {
+  // Клонируем всё, кроме rounds — они статичны и уходят один раз отдельным снимком.
+  const { rounds, ...rest } = game;
+  const clone = structuredClone(rest);
   for (const team of clone.teams) delete team.token;
 
   const liveTeam = teamId != null ? game.teams.find((team) => team.id === Number(teamId)) : null;
@@ -435,13 +460,10 @@ export function serializeForViewer(game, { seeAllAnswers = false, teamId = null,
   // вошёл по PIN, а не упирался в непонятную ошибку.
   const tokenStale = !seeAllAnswers && teamId != null && teamToken !== "" && liveTeam != null && !liveTeam.token;
 
-  clone.viewer = {
-    teamId,
-    teamAccess,
-    tokenStale,
-  };
+  clone.viewer = { teamId, teamAccess, tokenStale };
 
   if (seeAllAnswers) return clone;
+
   const redacted = {};
   if (teamId != null && teamAccess) {
     for (const [key, byTeam] of Object.entries(game.answers)) {
@@ -449,43 +471,76 @@ export function serializeForViewer(game, { seeAllAnswers = false, teamId = null,
     }
   }
   clone.answers = redacted;
-
-  // Безопасность: правильные ответы не отдаём никому, кроме ведущей (seeAllAnswers).
-  // Иначе их видно в консоли разработчика во время игры. На раскрытии кино-раунда
-  // показываем ответ только текущего слайда.
-  const isReview = clone.status === "round_review";
-  const revealIndex = clone.currentReviewIndex || 0;
-  // На итогах раунда (round_results) для раундов с revealAnswers показываем правильные
-  // ответы этого раунда всем — но только их (не варианты матчинга и не другие раунды).
-  const showRoundAnswers = clone.status === "round_results";
-  clone.rounds = (clone.rounds || []).map((round, ri) => {
-    const revealThisRound = showRoundAnswers && Boolean(round.revealAnswers) && ri === clone.currentRoundIndex;
-    return {
-      ...round,
-      questions: (round.questions || []).map((q, qi) => {
-        const keepReveal = isReview && ri === clone.currentRoundIndex && qi === revealIndex;
-        const safeQ = { ...q };
-        delete safeQ.correct;
-        delete safeQ.acceptedAnswers;
-        delete safeQ.artistAccepted;
-        delete safeQ.titleAccepted;
-        if (!revealThisRound) {
-          delete safeQ.artist;
-          delete safeQ.title;
-        }
-        if (!keepReveal && !revealThisRound) {
-          delete safeQ.answer;
-          delete safeQ.answerTitle;
-        }
-        if (!keepReveal) {
-          delete safeQ.revealImage;
-        }
-        return safeQ;
-      }),
-    };
-  });
-
+  // Для зрителей/команд к динамике прикладываем только сейчас показываемые правильные
+  // ответы (текущий слайд кино-ревью или ответы раунда с revealAnswers на итогах).
+  clone.reveals = computeReveals(game);
   return clone;
+}
+
+// Правильные ответы, которые сейчас можно показать не-ведущей. Всё остальное (correct,
+// матчинг) не отдаём никогда — иначе видно в консоли во время игры.
+function computeReveals(game) {
+  const reveals = {};
+  const cri = game.currentRoundIndex;
+  const round = game.rounds?.[cri];
+  if (!round) return reveals;
+  if (game.status === "round_review") {
+    const qi = game.currentReviewIndex || 0;
+    const q = round.questions?.[qi];
+    if (q) reveals[`${cri}:${qi}`] = pickReveal(q, { image: true });
+  } else if (game.status === "round_results" && round.revealAnswers) {
+    (round.questions || []).forEach((q, qi) => {
+      reveals[`${cri}:${qi}`] = pickReveal(q, { song: true });
+    });
+  }
+  return reveals;
+}
+
+function pickReveal(q, { image = false, song = false } = {}) {
+  const out = {};
+  if (q.answer != null) out.answer = q.answer;
+  if (q.answerTitle != null) out.answerTitle = q.answerTitle;
+  if (image && q.revealImage != null) out.revealImage = q.revealImage;
+  if (song) {
+    if (q.artist != null) out.artist = q.artist;
+    if (q.title != null) out.title = q.title;
+  }
+  return out;
+}
+
+// Чисто статичные вопросы для зрителя/команды: без единого правильного ответа.
+function staticRoundsForViewer(game) {
+  return (game.rounds || []).map((round) => ({
+    ...round,
+    questions: (round.questions || []).map((q) => {
+      const safeQ = { ...q };
+      delete safeQ.correct;
+      delete safeQ.acceptedAnswers;
+      delete safeQ.artistAccepted;
+      delete safeQ.titleAccepted;
+      delete safeQ.answer;
+      delete safeQ.answerTitle;
+      delete safeQ.artist;
+      delete safeQ.title;
+      delete safeQ.revealImage;
+      return safeQ;
+    }),
+  }));
+}
+
+// Полный снимок: динамика + тексты вопросов. Отдаётся один раз (первый кадр стрима и
+// /api/state). Ведущая получает вопросы целиком (с правильными ответами), остальные —
+// статичные вопросы без ответов.
+export function serializeForViewer(game, opts = {}) {
+  const clone = serializeBase(game, opts);
+  clone.rounds = opts.seeAllAnswers ? structuredClone(game.rounds) : staticRoundsForViewer(game);
+  return clone;
+}
+
+// Лёгкое обновление для стрима: та же динамика, но без текстов вопросов (их клиент уже
+// получил один раз). Клиент склеит эти статусы/reveals с сохранённым контентом.
+export function serializeLive(game, opts = {}) {
+  return serializeBase(game, opts);
 }
 
 export function getFinalPodium(game) {

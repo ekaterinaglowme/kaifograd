@@ -529,6 +529,73 @@ test("adjustScore with an unknown team is handled and does not crash the server"
   }
 });
 
+// Сценарий: кто-то шлёт огромный запрос (десятки КБ), чтобы «завесить» сервер на разборе.
+// Сервер обрывает его с ошибкой 413 и продолжает работать — игра не страдает.
+test("an oversized request body is rejected with 413 and the server keeps running", async () => {
+  const server = await startTestServer();
+  try {
+    const huge = "x".repeat(20000);
+    const response = await fetch(`${server.baseUrl}/api/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "loginTeam", pin: "101", junk: huge }),
+    });
+    assert.equal(response.status, 413);
+    assert.match((await response.json()).error, /слишком большой/i);
+
+    // Сервер жив и отвечает на нормальные запросы.
+    assert.equal((await state(server.baseUrl)).status, "lobby");
+    assert.equal(server.child.exitCode, null);
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: команда прислала ответ длиннее 150 символов. Он сохраняется обрезанным до 150,
+// чтобы огромные строки не раздували состояние игры и рассылку.
+test("a text answer longer than 150 characters is stored capped to 150 through the API", async () => {
+  const server = await startTestServer();
+  try {
+    const login = await loginAndJoin(server.baseUrl, "101", { name: "Длинные", color: "#FF5FA2" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+    await action(server.baseUrl, {
+      type: "submitAnswer",
+      teamId: 1,
+      token: login.token,
+      value: "очень длинный ответ ".repeat(50),
+      roundIndex: 0,
+      questionIndex: 0,
+    });
+
+    const game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.answers["0:0"][1].value.length, 150);
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: длинное название команды приходит через ручку join — на сервере оно тоже
+// обрезается до 150 символов (защита не только на клиенте).
+test("a long team name coming through the API is capped to 150 characters", async () => {
+  const server = await startTestServer();
+  try {
+    const login = await action(server.baseUrl, { type: "loginTeam", pin: "101" });
+    await action(server.baseUrl, {
+      type: "join",
+      teamId: 1,
+      token: login.token,
+      name: "Мега".repeat(100),
+      color: "#FF5FA2",
+      captain: "Команда",
+    });
+
+    const game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.teams[0].displayName.length, 150);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("the static handler blocks path traversal outside the web root", async () => {
   const server = await startTestServer();
   try {
@@ -698,6 +765,111 @@ test("manual attempt can be paused, resumed, finished, and is guarded outside th
     game = await state(server.baseUrl);
     assert.equal(game.manualAttempt.status, "finished");
     assert.equal(game.manualAttempt.remainingMs, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: команда ответила верно, ведущая начислила баллы кнопкой «Подвести итог»,
+// а потом нажала «Пересчитать». Балл должен остаться одним — пересчёт снимает старые
+// баллы и начисляет заново, а не прибавляет второй раз.
+test("recount re-scores the current question without doubling points", async () => {
+  const server = await startTestServer();
+  try {
+    const team = await loginAndJoin(server.baseUrl, "101", { name: "Пересчёт", color: "#FF5FA2" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+    await action(server.baseUrl, { type: "submitAnswer", teamId: 1, token: team.token, value: "B" });
+    await action(server.baseUrl, { type: "scoreNow", code: "0306" });
+
+    let game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.teams[0].totalScore, 1);
+
+    await action(server.baseUrl, { type: "recount", code: "0306" });
+    game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.teams[0].totalScore, 1);
+    assert.equal(game.status, "question_scored");
+
+    await action(server.baseUrl, { type: "recount", code: "0306" });
+    game = await state(server.baseUrl, "view=host&code=0306");
+    assert.equal(game.teams[0].totalScore, 1);
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: ручной раунд «Остров» — ведущая назначила победителя по PIN и закрыла раунд
+// отдельной кнопкой. Игра уходит в отсчёт перед итогами, а в итогах раунда виден победитель.
+test("closeManualRound finishes the manual round and its results show the winner", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "Первые", color: "#FF5FA2" });
+    await loginAndJoin(server.baseUrl, "102", { name: "Вторые", color: "#4CC9F0" });
+    for (let i = 0; i < 3; i += 1) await action(server.baseUrl, { type: "nextRound", code: "0306" });
+
+    let game = await state(server.baseUrl);
+    assert.equal(game.rounds[game.currentRoundIndex].manual, true);
+
+    await action(server.baseUrl, { type: "awardManualWinnerByPin", code: "0306", pin: "102" });
+    await action(server.baseUrl, { type: "closeManualRound", code: "0306" });
+
+    game = await state(server.baseUrl);
+    assert.equal(game.status, "round_countdown");
+
+    game = await waitForState(server.baseUrl, (next) => next.status === "round_results");
+    assert.equal(game.roundResults.at(-1).winners[0].teamId, 2);
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: после последнего раунда ведущая показала пьедестал, а затем — финальное
+// поздравление. Экран наблюдающего переключается в состояние «congrats» без обратного отсчёта.
+test("showFinalCongrats switches the final screen to the congrats state for the observer", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "Финалисты", color: "#FF5FA2" });
+    for (let i = 0; i < 7; i += 1) await action(server.baseUrl, { type: "nextRound", code: "0306" });
+
+    await action(server.baseUrl, { type: "finalReveal", code: "0306" });
+    await waitForState(server.baseUrl, (next) => next.finalReveal === "podium");
+
+    await action(server.baseUrl, { type: "showFinalCongrats", code: "0306" });
+    const observer = await state(server.baseUrl, "view=screen");
+    assert.equal(observer.finalReveal, "congrats");
+    assert.equal(observer.finalCountdown, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: ведущая вручную поправляет баллы команде (+2), а потом отнимает больше,
+// чем у команды есть (-5). Баллы меняются, но не уходят в минус.
+test("adjustScore changes a team's score through the API and never goes below zero", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "Баллы", color: "#FF5FA2" });
+
+    await action(server.baseUrl, { type: "adjustScore", code: "0306", teamId: 1, delta: 2 });
+    let game = await state(server.baseUrl);
+    assert.equal(game.teams[0].totalScore, 2);
+
+    await action(server.baseUrl, { type: "adjustScore", code: "0306", teamId: 1, delta: -5 });
+    game = await state(server.baseUrl);
+    assert.equal(game.teams[0].totalScore, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: на сервер прилетело действие с неизвестным типом (опечатка или старый клиент).
+// Сервер вежливо отвечает ошибкой и продолжает работать.
+test("an unknown action type is rejected with a clear error and the server survives", async () => {
+  const server = await startTestServer();
+  try {
+    const res = await actionMayFail(server.baseUrl, { type: "explodeGame", code: "0306" });
+    assert.equal(res.ok, false);
+    assert.equal(res.body.error, "Неизвестное действие");
+    assert.equal((await state(server.baseUrl)).status, "lobby");
   } finally {
     await server.stop();
   }

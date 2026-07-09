@@ -27,6 +27,10 @@ const state = {
 };
 
 let game = null;
+// Тексты вопросов (статичный контент) получаем один раз полным снимком и держим тут.
+// Дальше стрим шлёт только динамику, а game.rounds пересобираем из контента + reveals.
+let contentRounds = null;
+let contentPending = false;
 let eventSource = null;
 let connectedQuery = "";
 let pollingTimer = null;
@@ -78,7 +82,32 @@ async function fetchState() {
   applyIncomingGame(await response.json());
 }
 
-function applyIncomingGame(nextGame) {
+// Склеиваем однажды полученные тексты вопросов с текущими reveals (какой ответ сейчас
+// показывать). Так остальной рендер работает с привычным game.rounds без изменений.
+function mergeContentRounds(rounds, reveals) {
+  if (!reveals || Object.keys(reveals).length === 0) return rounds;
+  return rounds.map((round, ri) => ({
+    ...round,
+    questions: (round.questions || []).map((q, qi) => {
+      const reveal = reveals[`${ri}:${qi}`];
+      return reveal ? { ...q, ...reveal } : q;
+    }),
+  }));
+}
+
+function applyIncomingGame(payload) {
+  // Полный снимок несёт тексты вопросов — запоминаем их как контент. Лёгкое обновление
+  // из стрима их не несёт: берём сохранённый контент.
+  if (Array.isArray(payload.rounds)) contentRounds = payload.rounds;
+  if (!contentRounds) {
+    // Пришло лёгкое обновление раньше, чем мы получили контент — подтягиваем полный снимок.
+    if (!contentPending) {
+      contentPending = true;
+      fetchState().catch(showError).finally(() => (contentPending = false));
+    }
+    return;
+  }
+  const nextGame = { ...payload, rounds: mergeContentRounds(contentRounds, payload.reveals) };
   const previousGame = game;
   game = nextGame;
   state.connection = "online";
@@ -198,12 +227,6 @@ function isRunawayAnswerLocked(letter) {
   const q = currentQuestion();
   if (!q.runawayOption || q.runawayOption !== letter) return false;
   return questionElapsedMs() < (q.runawayDelayMs || 7000);
-}
-
-function runawayLabel(letter) {
-  if (!isRunawayAnswerLocked(letter)) return "";
-  const left = Math.max(1, Math.ceil(((currentQuestion().runawayDelayMs || 7000) - questionElapsedMs()) / 1000));
-  return `<span class="runaway-badge">${left}</span>`;
 }
 
 function isManualRound() {
@@ -364,24 +387,53 @@ function updateRunawayButtons() {
     const locked = isRunawayAnswerLocked(letter);
     button.classList.toggle("runaway-locked", locked);
     button.classList.toggle("runaway-catchable", !locked);
-    if (!locked) {
-      button.style.setProperty("--runaway-x", "0px");
-      button.style.setProperty("--runaway-y", "0px");
-    }
-    const badge = button.querySelector("[data-runaway-count]");
-    if (badge) badge.textContent = locked ? String(Math.max(1, Math.ceil(((currentQuestion().runawayDelayMs || 7000) - questionElapsedMs()) / 1000))) : "✓";
+    if (!locked) settleRunawayButton(button);
   }
 }
 
-function moveRunawayButton(button) {
-  const box = button.closest(".options")?.getBoundingClientRect();
-  const maxX = Math.min(190, Math.max(80, (box?.width || 420) / 3));
-  const maxY = Math.min(110, Math.max(50, (box?.height || 180) / 2));
-  const x = Math.round((Math.random() * 2 - 1) * maxX);
-  const y = Math.round((Math.random() * 2 - 1) * maxY);
-  button.style.setProperty("--runaway-x", `${x}px`);
-  button.style.setProperty("--runaway-y", `${y}px`);
+// Когда время вышло — кнопку можно поймать: возвращаем её на место в сетку.
+function settleRunawayButton(button) {
+  button.classList.remove("runaway-flying");
+  button.style.removeProperty("--runaway-x");
+  button.style.removeProperty("--runaway-y");
+  button.style.removeProperty("width");
 }
+
+// Пока идёт отсчёт (15 сек) кнопка «Почти готово» удирает в случайную точку всего экрана.
+function moveRunawayButton(button) {
+  const rect = button.getBoundingClientRect();
+  const width = rect.width || 260;
+  const height = rect.height || 70;
+  const margin = 12;
+  const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+  const maxTop = Math.max(margin, window.innerHeight - height - margin);
+  const left = Math.round(margin + Math.random() * (maxLeft - margin));
+  const top = Math.round(margin + Math.random() * (maxTop - margin));
+  // При переходе в «полёт» фиксируем ширину, чтобы кнопка не схлопнулась вне сетки.
+  button.style.width = `${width}px`;
+  button.classList.add("runaway-flying");
+  button.style.setProperty("--runaway-x", `${left}px`);
+  button.style.setProperty("--runaway-y", `${top}px`);
+}
+
+// Кнопка дёргается ещё до клика: как только курсор подходит близко — она уже отпрыгнула.
+let lastRunawayDodge = 0;
+document.addEventListener("mousemove", (event) => {
+  const now = Date.now();
+  if (now - lastRunawayDodge < 90) return;
+  for (const button of document.querySelectorAll("[data-runaway-answer]")) {
+    if (!isRunawayAnswerLocked(button.dataset.runawayAnswer)) continue;
+    const rect = button.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const distance = Math.hypot(event.clientX - cx, event.clientY - cy);
+    if (distance < Math.max(rect.width, rect.height) / 2 + 130) {
+      moveRunawayButton(button);
+      lastRunawayDodge = now;
+      break;
+    }
+  }
+});
 
 function render() {
   // Не пересобираем DOM (и не перезагружаем встроенную карту Miro), пока открыта её вкладка.
@@ -706,7 +758,7 @@ function renderTeamSetup(team) {
         <h2>Название и цвет команды</h2>
         <p class="muted">${game.status === "lobby" ? "До начала игры можно переименовать команду и выбрать цвет стикеров." : "Игра уже идёт — введите название и цвет, чтобы присоединиться и отвечать."}</p>
         <label class="muted">Название команды</label>
-        <input class="input" data-field="setup-team-name" value="${safe(selectedName)}" placeholder="Например: Архитекторы кайфа" />
+        <input class="input" data-field="setup-team-name" value="${safe(selectedName)}" maxlength="150" placeholder="Например: Архитекторы кайфа" />
         <label class="muted">Цвет стикеров и графика</label>
         <div class="color-grid">
           ${TEAM_COLORS.slice(0, 6).map((color) => {
@@ -883,7 +935,7 @@ function renderTeamAnswerControl(team) {
             .filter(Boolean)
             .join(" ");
           const attrs = runaway ? `data-runaway-answer="${letter}"` : "";
-          return `<button class="${classes}" data-answer="${letter}" ${attrs}>${letter}. ${safe(option)}${runaway ? runawayLabel(letter).replace("runaway-badge", "runaway-badge\" data-runaway-count=\"yes") : ""}</button>`;
+          return `<button class="${classes}" data-answer="${letter}" ${attrs}>${letter}. ${safe(option)}</button>`;
         }).join("")}
       </div>
       <div class="answer-hint">Нажмите на вариант: он сразу отправится на сервер.</div>
@@ -892,13 +944,13 @@ function renderTeamAnswerControl(team) {
   if (q.type === "song") {
     return html`
       <img class="listen-cat" src="assets/listen-cat.jpg" alt="Звучит песня" onerror="this.remove()" />
-      <input class="input answer-input" data-field="answer-artist" value="${safe(state.songArtist)}" placeholder="Исполнитель" />
-      <input class="input answer-input song-second" data-field="answer-title" value="${safe(state.songTitle)}" placeholder="Название песни" />
+      <input class="input answer-input" data-field="answer-artist" value="${safe(state.songArtist)}" maxlength="150" placeholder="Исполнитель" />
+      <input class="input answer-input song-second" data-field="answer-title" value="${safe(state.songTitle)}" maxlength="150" placeholder="Название песни" />
       <div class="actions answer-actions"><button class="btn" data-action="submit-answer" ${state.songArtist.trim() || state.songTitle.trim() ? "" : "disabled"}>Отправить ответ</button></div>
     `;
   }
   return html`
-    <input class="input answer-input" data-field="answer-input" value="${safe(state.selectedAnswer)}" placeholder="${q.type === "number" ? "Введите число" : "Введите ответ"}" />
+    <input class="input answer-input" data-field="answer-input" value="${safe(state.selectedAnswer)}" maxlength="150" placeholder="${q.type === "number" ? "Введите число" : "Введите ответ"}" />
     <div class="actions answer-actions"><button class="btn" data-action="submit-answer" ${state.selectedAnswer.trim() ? "" : "disabled"}>Отправить ответ</button></div>
   `;
 }
@@ -909,10 +961,14 @@ function renderScreen() {
       <section class="projector-screen">
         <div class="panel projector-panel">
           <div class="question projector-question projector-welcome">
-            <img class="lobby-office" src="assets/office.jpg" alt="" onerror="this.remove()" />
-            <h2 class="projector-round-title">Игра скоро начнётся</h2>
-            <h2 class="projector-prompt">Коллеги, садитесь поудобнее, занимайте места и готовьтесь строить Кайфоград.</h2>
-            <p class="projector-meta">Команд в игре: ${readyTeams().length}</p>
+            <div class="lobby-layout">
+              <img class="lobby-office" src="assets/office.jpg" alt="" onerror="this.remove()" />
+              <div class="lobby-text">
+                <h2 class="projector-round-title">Игра скоро начнётся</h2>
+                <h2 class="projector-prompt">Коллеги, садитесь поудобнее, занимайте места и готовьтесь строить Кайфоград.</h2>
+                <p class="projector-meta">Команд в игре: ${readyTeams().length}</p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1028,14 +1084,14 @@ function renderFilmAnswerReview(context = "team") {
 
 function renderRoundCountdown() {
   const count = Math.max(1, game.roundCountdown ?? 3);
-  return `<section class="panel countdown"><div><img class="countdown-cat" src="assets/loading-cat.jpg" alt="" onerror="this.remove()" /><p class="eyebrow">итоги раунда</p><div class="countdown-number">${count}</div><h2>${safe(currentRound().title)}</h2></div></section>`;
+  return `<section class="panel countdown"><div class="countdown-layout"><img class="countdown-cat" src="assets/loading-cat.jpg" alt="" onerror="this.remove()" /><div class="countdown-body"><p class="eyebrow">итоги раунда</p><div class="countdown-number">${count}</div><h2>${safe(currentRound().title)}</h2></div></div></section>`;
 }
 
 function renderFinalReveal(mode) {
   const podium = getFinalPodium(game);
   if (mode === "countdown") {
     const count = Math.max(1, game.finalCountdown ?? 3);
-    return `<section class="panel countdown"><div><img class="countdown-cat" src="assets/loading-cat.jpg" alt="" onerror="this.remove()" /><p class="eyebrow">финальное раскрытие</p><div class="countdown-number">${count}</div><h2>Считаем вклад в Кайфоград...</h2></div></section>`;
+    return `<section class="panel countdown"><div class="countdown-layout"><img class="countdown-cat" src="assets/loading-cat.jpg" alt="" onerror="this.remove()" /><div class="countdown-body"><p class="eyebrow">финальное раскрытие</p><div class="countdown-number">${count}</div><h2>Считаем вклад в Кайфоград...</h2></div></div></section>`;
   }
   if (mode === "congrats") return renderFinalCongrats(podium);
   return html`
@@ -1066,8 +1122,19 @@ function renderFinalCongrats(podium = getFinalPodium(game)) {
   `;
 }
 
+function reorderCityCards(rounds, resourceA, resourceB) {
+  const list = rounds.slice();
+  const a = list.findIndex((round) => round.resource === resourceA);
+  const b = list.findIndex((round) => round.resource === resourceB);
+  if (a !== -1 && b !== -1) [list[a], list[b]] = [list[b], list[a]];
+  return list;
+}
+
 function renderCity() {
   const rounds = game.rounds?.length ? game.rounds : fullRounds;
+  // В Miro-вкладке карточки «Счастье жителей» и «Театр» показываем в обратном порядке
+  // (Театр слева, Счастье жителей справа), не меняя порядок самих раундов игры.
+  const cityRounds = reorderCityCards(rounds, "Счастье жителей", "Театр");
   return html`
     <section class="grid">
       <div class="panel">
@@ -1091,7 +1158,7 @@ function renderCity() {
           <span class="status">${game.cityResources.length}/${rounds.length}</span>
         </div>
         <div class="city-map">
-          ${rounds.map((round) => {
+          ${cityRounds.map((round) => {
             const stickers = game.cityResources.filter((item) => item.resource === round.resource);
             const cardName = round.cityName || round.resource;
             return `<article class="district"><strong>${safe(cardName)}</strong><p class="muted">${safe(resourceDescriptions[round.resource] || "")}</p>${stickers.map((item) => `<div class="sticker" style="--team-color:${item.color}">Раунд завершён<br>Победила команда ${item.teamId} — ${safe(item.teamName)}</div>`).join("")}</article>`;

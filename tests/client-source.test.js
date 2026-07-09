@@ -46,6 +46,18 @@ test("observer screen contains quiz and reveal content, not host controls", asyn
   assert.doesNotMatch(renderScreenSource, /data-action="adjust-score"/);
 });
 
+test("round countdown lays the cat out on the left and the countdown text on the right", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const start = source.indexOf("function renderRoundCountdown()");
+  const end = source.indexOf("function renderFinalReveal", start);
+  const markup = source.slice(start, end);
+
+  assert.match(markup, /countdown-layout/);
+  // Кот идёт раньше блока с цифрой отсчёта — то есть слева от него.
+  assert.ok(markup.indexOf("countdown-cat") < markup.indexOf("countdown-body"), "кот раньше текста отсчёта");
+  assert.ok(markup.indexOf("countdown-body") < markup.indexOf("countdown-number"), "цифра внутри правого блока");
+});
+
 test("captain client no longer shows a waiting-for-host-start screen", async () => {
   const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 

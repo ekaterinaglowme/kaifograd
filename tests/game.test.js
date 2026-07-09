@@ -15,9 +15,11 @@ import {
   recountQuestion,
   adjustScore,
   serializeForViewer,
+  serializeLive,
   TEAM_PINS,
   teamIdForPin,
   updateTeamSetup,
+  MAX_TEXT_LEN,
 } from "../src/game.js";
 import { fullRounds } from "../src/rounds.js";
 
@@ -243,7 +245,7 @@ test("round 4 is the manual island round and round 8 is history bug", () => {
 
 test("warmup second question marks one runaway option", () => {
   assert.equal(fullRounds[0].questions[1].runawayOption, "D");
-  assert.equal(fullRounds[0].questions[1].runawayDelayMs, 7000);
+  assert.equal(fullRounds[0].questions[1].runawayDelayMs, 15000);
 });
 
 test("recount rolls back a choice question so it can be scored again", () => {
@@ -297,6 +299,29 @@ test("adjust score never pushes a team below zero", () => {
 
   assert.equal(game.teams[0].roundScore, 0);
   assert.equal(game.teams[0].totalScore, 0);
+});
+
+test("a team name longer than 150 characters is capped to 150", () => {
+  const game = createGame({ teamCount: 2 });
+  registerTeam(game, 1, { name: "Я".repeat(400), color: "#FF5FA2", captain: "К".repeat(400) });
+  assert.equal(game.teams[0].displayName.length, MAX_TEXT_LEN);
+  assert.equal(game.teams[0].captain.length, MAX_TEXT_LEN);
+});
+
+test("a text answer longer than 150 characters is stored capped to 150", () => {
+  const game = createGame({ teamCount: 2 });
+  startRound(game);
+  const stored = submitAnswer(game, 1, "ответ ".repeat(200));
+  assert.equal(stored.value.length, MAX_TEXT_LEN);
+});
+
+test("a song answer keeps only artist and title, each capped to 150", () => {
+  const game = createGame({ teamCount: 2 });
+  startRound(game);
+  const stored = submitAnswer(game, 1, { artist: "и".repeat(300), title: "т".repeat(300), evil: "x".repeat(99999) });
+  assert.equal(stored.value.artist.length, MAX_TEXT_LEN);
+  assert.equal(stored.value.title.length, MAX_TEXT_LEN);
+  assert.equal("evil" in stored.value, false);
 });
 
 test("song questions score artist and title fields separately", () => {
@@ -443,21 +468,47 @@ test("serializeForViewer reveals round answers on results only for revealAnswers
   game.rounds[1].questions = [{ type: "text", answer: "Секрет" }];
 
   const teamView = serializeForViewer(game, { teamId: 1 });
+  // Сами тексты вопросов чистые — без ответов и вариантов матчинга.
   const song = teamView.rounds[0].questions[0];
-  assert.equal(song.artist, "Pixies");
-  assert.equal(song.title, "Where Is My Mind?");
+  assert.equal("artist" in song, false);
+  assert.equal("title" in song, false);
   assert.equal("artistAccepted" in song, false);
-  assert.equal("titleAccepted" in song, false);
-  assert.equal(teamView.rounds[0].questions[1].answer, "Чипи чапа");
-  assert.equal("acceptedAnswers" in teamView.rounds[0].questions[1], false);
-  // Раунд без revealAnswers — ответ скрыт.
-  assert.equal("answer" in teamView.rounds[1].questions[0], false);
+  assert.equal("answer" in teamView.rounds[0].questions[1], false);
+  // Правильные ответы этого раунда приходят отдельным полем reveals.
+  assert.equal(teamView.reveals["0:0"].artist, "Pixies");
+  assert.equal(teamView.reveals["0:0"].title, "Where Is My Mind?");
+  assert.equal("artistAccepted" in teamView.reveals["0:0"], false);
+  assert.equal(teamView.reveals["0:1"].answer, "Чипи чапа");
+  // Раунд без revealAnswers — его ответов в reveals нет.
+  assert.equal("1:0" in teamView.reveals, false);
 
-  // До итогов (round_running) ответы скрыты даже у revealAnswers-раунда.
+  // До итогов (round_running) reveals пуст даже у revealAnswers-раунда.
   game.status = "round_running";
   const running = serializeForViewer(game, { teamId: 1 });
-  assert.equal("artist" in running.rounds[0].questions[0], false);
-  assert.equal("answer" in running.rounds[0].questions[1], false);
+  assert.deepEqual(running.reveals, {});
+});
+
+test("serializeLive omits question texts but keeps dynamic state and reveals", () => {
+  const game = createGame({ teamCount: 2 });
+  game.status = "round_results";
+  game.currentRoundIndex = 0;
+  game.rounds[0].revealAnswers = true;
+  game.rounds[0].questions = [{ type: "text", answer: "Ответ", acceptedAnswers: ["ответ"] }];
+
+  const live = serializeLive(game, { teamId: 1 });
+  // Тексты вопросов в лёгкое обновление не попадают.
+  assert.equal(live.rounds, undefined);
+  // Динамика на месте.
+  assert.equal(live.status, "round_results");
+  assert.ok(Array.isArray(live.teams));
+  assert.ok(live.viewer);
+  // Правильный ответ раунда приходит отдельным полем reveals, без матчинга.
+  assert.equal(live.reveals["0:0"].answer, "Ответ");
+  assert.doesNotMatch(JSON.stringify(live.reveals), /"acceptedAnswers"|"correct"/);
+
+  // У ведущей лёгкое обновление тоже без текстов вопросов.
+  const hostLive = serializeLive(game, { seeAllAnswers: true });
+  assert.equal(hostLive.rounds, undefined);
 });
 
 test("serializeForViewer returns a copy, not the live game", () => {
@@ -522,8 +573,11 @@ test("serializeForViewer during film review reveals only the current slide answe
 
   const view = serializeForViewer(game, { teamId: 1 });
 
-  assert.equal(view.rounds[0].questions[0].answer, "A0");
-  assert.equal(view.rounds[0].questions[0].revealImage, "r0.png");
-  assert.equal("answer" in view.rounds[0].questions[1], false);
-  assert.equal("revealImage" in view.rounds[0].questions[1], false);
+  // Ответ и картинку-раскрытие текущего слайда даём через reveals, а не в текстах вопросов.
+  assert.equal("answer" in view.rounds[0].questions[0], false);
+  assert.equal("revealImage" in view.rounds[0].questions[0], false);
+  assert.equal(view.reveals["0:0"].answer, "A0");
+  assert.equal(view.reveals["0:0"].revealImage, "r0.png");
+  // Следующий слайд ещё не раскрыт — его в reveals нет.
+  assert.equal("0:1" in view.reveals, false);
 });
