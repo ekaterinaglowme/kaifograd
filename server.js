@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import {
   createGame,
@@ -106,7 +106,11 @@ function persistSoon() {
   persistTimer = setTimeout(async () => {
     persistTimer = null;
     try {
-      await writeFile(stateFile, JSON.stringify(game));
+      // Атомарная запись: сначала во временный файл, потом rename. Если процесс упадёт
+      // ровно посреди записи, game-state.json останется целым предыдущей версией —
+      // игра после рестарта не обнулится из-за битого JSON.
+      await writeFile(`${stateFile}.tmp`, JSON.stringify(game));
+      await rename(`${stateFile}.tmp`, stateFile);
     } catch {
       // диск недоступен — не роняем сервер
     }

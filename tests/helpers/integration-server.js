@@ -7,8 +7,11 @@ import { spawn } from "node:child_process";
 export const nodeBin = process.execPath;
 export const projectRoot = new URL("../..", import.meta.url).pathname;
 
-export async function startTestServer({ port = 0, initialState = null } = {}) {
-  const dir = await mkdtemp(join(tmpdir(), "kaifograd-test-"));
+export async function startTestServer({ port = 0, initialState = null, dir = null } = {}) {
+  // Если передана существующая папка (сценарий «сервер перезапустился с тем же
+  // game-state.json»), не создаём новую и не удаляем чужую в stop().
+  const ownsDir = !dir;
+  if (!dir) dir = await mkdtemp(join(tmpdir(), "kaifograd-test-"));
   const stateFile = join(dir, "game-state.json");
   if (initialState) {
     await writeFile(stateFile, JSON.stringify(initialState, null, 2));
@@ -56,7 +59,7 @@ export async function startTestServer({ port = 0, initialState = null } = {}) {
       child.kill();
       await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
     }
-    await rm(dir, { recursive: true, force: true });
+    if (ownsDir) await rm(dir, { recursive: true, force: true });
   }
 
   return {
