@@ -487,3 +487,43 @@ test("final podium reveals third, second, first without mutating scores", () => 
     ],
   );
 });
+
+test("closeRound grants no winner on an all-zero round", () => {
+  const game = createGame({ teamCount: 3 });
+
+  const result = closeRound(game);
+
+  assert.equal(result.winners.length, 0);
+  assert.equal(game.cityResources.length, 0);
+});
+
+test("closeRound grants the resource to every team tied at the top score", () => {
+  const game = createGame({ teamCount: 3 });
+  game.teams[0].roundScore = 2;
+  game.teams[1].roundScore = 2;
+  game.teams[2].roundScore = 1;
+
+  const result = closeRound(game);
+
+  assert.deepEqual(result.winners.map((w) => w.teamId).sort(), [1, 2]);
+  assert.equal(game.cityResources.length, 2);
+});
+
+test("serializeForViewer during film review reveals only the current slide answer", () => {
+  const game = createGame({ teamCount: 2 });
+  game.status = "round_review";
+  game.currentRoundIndex = 0;
+  game.currentReviewIndex = 0;
+  game.rounds[0].answerReview = true;
+  game.rounds[0].questions = [
+    { type: "text", answer: "A0", answerTitle: "A0", revealImage: "r0.png" },
+    { type: "text", answer: "A1", answerTitle: "A1", revealImage: "r1.png" },
+  ];
+
+  const view = serializeForViewer(game, { teamId: 1 });
+
+  assert.equal(view.rounds[0].questions[0].answer, "A0");
+  assert.equal(view.rounds[0].questions[0].revealImage, "r0.png");
+  assert.equal("answer" in view.rounds[0].questions[1], false);
+  assert.equal("revealImage" in view.rounds[0].questions[1], false);
+});

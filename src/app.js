@@ -90,7 +90,19 @@ function applyIncomingGame(nextGame) {
     render();
     return;
   }
+  // Новый вопрос/раунд — убираем прошлую подсказку (например «не успели, вопрос сменился»),
+  // чтобы она не висела поверх следующего вопроса.
+  if (
+    state.teamNotice &&
+    previousGame &&
+    (previousGame.currentRoundIndex !== game.currentRoundIndex || previousGame.currentQuestionIndex !== game.currentQuestionIndex)
+  ) {
+    state.teamNotice = "";
+  }
   resetDraftForQuestion();
+  // Пока команда печатает PIN (частый кейс: опоздавший входит во время отсчёта 3-2-1),
+  // не пересобираем DOM целиком — иначе поле теряет фокус и курсор на каждом тике.
+  if (isPinInputActive()) return;
   if (shouldPreserveFocusedAnswer(previousGame)) updateLiveTimers();
   else render();
 }
@@ -153,6 +165,7 @@ function teamFriendlyError(message) {
   if (/PIN|Только для ведущей/i.test(message)) return "PIN не подошёл. Проверьте код команды и попробуйте ещё раз.";
   if (/Сначала сохраните название команды/i.test(message)) return "Сначала сохраните название и цвет команды.";
   if (/Сейчас нельзя отвечать/i.test(message)) return "Сейчас вопрос не принимает ответы. Дождитесь следующего экрана.";
+  if (/вопрос уже сменился/i.test(message)) return "Не успели — вопрос уже сменился. Готовьтесь к следующему.";
   return "Не получилось отправить действие. Попробуйте ещё раз.";
 }
 
@@ -268,6 +281,10 @@ function isRoundCountdown() {
 function isAnswerInputActive() {
   const active = document.activeElement;
   return Boolean(active?.matches?.('[data-field="answer-input"], [data-field="answer-artist"], [data-field="answer-title"]'));
+}
+
+function isPinInputActive() {
+  return Boolean(document.activeElement?.matches?.('[data-field="team-pin"]'));
 }
 
 function shouldPreserveFocusedAnswer(previousGame) {
@@ -399,6 +416,9 @@ function renderBody() {
 }
 
 function renderView() {
+  // Команду без сессии (первый вход или после сброса игры) всегда пускаем на PIN-гейт —
+  // даже во время отсчёта конца раунда или финала, иначе она видит 3-2-1 и не может войти.
+  if (state.view === "team" && !hasCurrentTeamToken()) return renderTeam();
   const reveal = finalRevealMode();
   if (reveal !== "hidden") return renderFinalReveal(reveal);
   if (isRoundCountdown()) return renderRoundCountdown();
@@ -567,6 +587,7 @@ function renderManualAttemptControls() {
     </div>
     <div class="actions manual-team-actions">
       ${readyTeams().map((item) => `<button class="btn secondary" data-action="start-manual-attempt" data-team="${item.id}" ${isRunning || isPaused ? "disabled" : ""}>Старт 60 сек: ${safe(item.displayName)}</button>`).join("")}
+      <button class="btn secondary manual-reset" data-action="reset-manual-attempt" ${attempt.status && attempt.status !== "idle" ? "" : "disabled"}>Сброс таймера</button>
     </div>
     <div class="actions">
       ${isRunning || isPaused ? `<button class="btn secondary" data-action="toggle-manual-attempt-pause">${isPaused ? "Продолжить попытку" : "Пауза попытки"}</button>` : ""}
@@ -769,7 +790,7 @@ function renderTeamActivity(team) {
         <p class="eyebrow">${safe(team.displayName)} · ${safe(round.title)}</p>
         <h2>Активность в зале</h2>
         <p class="muted" data-live="team-activity-status">${safe(teamActivityStatusText(team))}</p>
-        ${round.rules ? `<div class="activity-rules"><strong>Правила</strong><span>${safe(round.rules)}</span></div>` : ""}
+        ${round.rules ? `<div class="score-result"><strong>Правила</strong><span>${safe(round.rules)}</span></div>` : ""}
       </div>
     </section>
   `;
@@ -823,6 +844,7 @@ function renderTeamQuestion(team) {
           </div>
           <span class="status" data-live="team-status">${teamStatusLabel(team)}</span>
         </div>
+        ${renderTeamNotice()}
         <div class="question ${split ? "question-split" : ""} ${isFilmRound() ? "film-question" : ""}">${inner}</div>
       </div>
     </section>
@@ -872,12 +894,12 @@ function renderTeamAnswerControl(team) {
       <img class="listen-cat" src="assets/listen-cat.jpg" alt="Звучит песня" onerror="this.remove()" />
       <input class="input answer-input" data-field="answer-artist" value="${safe(state.songArtist)}" placeholder="Исполнитель" />
       <input class="input answer-input song-second" data-field="answer-title" value="${safe(state.songTitle)}" placeholder="Название песни" />
-      <div class="actions answer-actions"><button class="btn" data-action="submit-answer">Отправить ответ</button></div>
+      <div class="actions answer-actions"><button class="btn" data-action="submit-answer" ${state.songArtist.trim() || state.songTitle.trim() ? "" : "disabled"}>Отправить ответ</button></div>
     `;
   }
   return html`
     <input class="input answer-input" data-field="answer-input" value="${safe(state.selectedAnswer)}" placeholder="${q.type === "number" ? "Введите число" : "Введите ответ"}" />
-    <div class="actions answer-actions"><button class="btn" data-action="submit-answer">Отправить ответ</button></div>
+    <div class="actions answer-actions"><button class="btn" data-action="submit-answer" ${state.selectedAnswer.trim() ? "" : "disabled"}>Отправить ответ</button></div>
   `;
 }
 
@@ -1253,8 +1275,22 @@ function renderBarChart(useRound = true) {
   }).join("")}</div>`;
 }
 
+function answerValueIsEmpty(value) {
+  if (value && typeof value === "object") return !((value.artist || "").trim() || (value.title || "").trim());
+  return !String(value ?? "").trim();
+}
+
+function updateAnswerSubmitDisabled() {
+  const button = document.querySelector('.answer-actions [data-action="submit-answer"]');
+  if (!button) return;
+  const q = currentQuestion();
+  const empty = q.type === "song" ? !(state.songArtist.trim() || state.songTitle.trim()) : !state.selectedAnswer.trim();
+  button.disabled = empty;
+}
+
 async function submitCurrentAnswer(value) {
   if (!game || game.status !== "round_running" || isManualRound()) return;
+  if (answerValueIsEmpty(value)) return; // пустой ответ не отправляем
   await postAction({
     type: "submitAnswer",
     teamId: state.selectedTeamId,
@@ -1393,6 +1429,7 @@ document.addEventListener("click", async (event) => {
       "toggle-pause": { type: "togglePause", code: hostCode },
       "finish-manual-attempt": { type: "finishManualAttempt", code: hostCode },
       "toggle-manual-attempt-pause": { type: "toggleManualAttemptPause", code: hostCode },
+      "reset-manual-attempt": { type: "resetManualAttempt", code: hostCode },
       "next-round": { type: "nextRound", code: hostCode },
       "hide-round-results": { type: "hideRoundResults", code: hostCode },
       "reset-test": { type: "reset", code: hostCode },
@@ -1458,6 +1495,7 @@ document.addEventListener("input", (event) => {
   if (field === "answer-title") state.songTitle = event.target.value;
   if (field === "setup-team-name") state.setupName = event.target.value;
   if (field === "team-pin") state.setupPin = event.target.value;
+  if (field === "answer-input" || field === "answer-artist" || field === "answer-title") updateAnswerSubmitDisabled();
 });
 
 function needsLiveTimerUpdate() {
@@ -1467,6 +1505,7 @@ function needsLiveTimerUpdate() {
 setInterval(() => {
   if (!game) return;
   if (state.view === "city") return; // не дёргаем вкладку карты (иначе Miro-iframe перезагружается)
+  if (isPinInputActive()) return; // не пересобираем DOM, пока команда печатает PIN
   if (needsLiveTimerUpdate()) updateLiveTimers();
   if (finalRevealMode() === "countdown") render();
 }, 500);

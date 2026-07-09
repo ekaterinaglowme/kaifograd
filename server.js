@@ -266,6 +266,12 @@ function toggleManualAttemptPause() {
   return { ok: true };
 }
 
+function resetManualAttempt() {
+  if (!isManualRound()) return { error: "Это действие доступно только в ручном раунде" };
+  game.manualAttempt = createManualAttemptState(manualAttemptDurationMs());
+  return { ok: true };
+}
+
 function handleAction(action) {
   const type = action?.type;
   const isHost = action?.code === hostCode;
@@ -388,6 +394,11 @@ function handleAction(action) {
     }
     case "toggleManualAttemptPause": {
       const result = toggleManualAttemptPause();
+      if (result.error) return result;
+      break;
+    }
+    case "resetManualAttempt": {
+      const result = resetManualAttempt();
       if (result.error) return result;
       break;
     }
@@ -521,7 +532,15 @@ const server = createServer(async (request, response) => {
       logRequest(request, 400, "action rejected: bad JSON");
       return sendJson(response, 400, { error: "Плохой JSON" });
     }
-    const result = handleAction(action);
+    // Любое исключение обработчика (например teamById на неизвестный teamId) не должно
+    // валить процесс — иначе один кривой запрос кладёт живую игру.
+    let result;
+    try {
+      result = handleAction(action);
+    } catch (error) {
+      logRequest(request, 400, `action=${action?.type || "?"} threw="${error.message}"`);
+      return sendJson(response, 400, { error: "Не получилось выполнить действие" });
+    }
     const detail = `action=${action?.type || "?"} team=${action?.teamId ?? "-"} ${result.error ? `error="${result.error}"` : "ok"}`;
     logRequest(request, result.error ? 400 : 200, detail);
     if (result.error) return sendJson(response, 400, result);

@@ -396,6 +396,145 @@ test("host can restart the game from final congrats, observer cannot", async () 
   }
 });
 
+test("a stale answer submitted as the question changes shows a clear notice", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      const team = await loginAndJoin(server.baseUrl, "101", { name: "Гонка", color: "#FF5FA2" });
+      await action(server.baseUrl, { type: "startRound", code: "0306" });
+
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      // Замораживаем SSE: клиент застревает на Q0, пока сервер уедет на Q1.
+      await page.route("**/api/events*", (route) => route.abort());
+      await page.goto(`${server.baseUrl}/?view=team&team=1`);
+      await page.evaluate(([id, tok]) => {
+        sessionStorage.setItem("kaifogradTeamId", String(id));
+        sessionStorage.setItem(`kaifogradTeamToken:${id}`, tok);
+      }, [team.teamId, team.token]);
+      await page.reload();
+      await page.locator(".options .option").first().waitFor({ state: "visible" });
+
+      await action(server.baseUrl, { type: "nextQuestion", code: "0306" });
+      await page.locator(".options .option").nth(1).click(); // ответ на устаревший Q0
+
+      await page.locator(".team-notice").getByText("вопрос уже сменился", { exact: false }).waitFor({ state: "visible" });
+      const gameState = await state(server.baseUrl);
+      assert.equal(Object.keys(gameState.answers).length, 0);
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("text answer submit is disabled until at least one character is typed", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      const team = await loginAndJoin(server.baseUrl, "101", { name: "Т", color: "#FF5FA2" });
+      await action(server.baseUrl, { type: "nextRound", code: "0306" });
+      await action(server.baseUrl, { type: "nextRound", code: "0306" }); // раунд 2 — текстовый
+
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      await page.goto(`${server.baseUrl}/?view=team&team=1`);
+      await page.evaluate(([id, tok]) => {
+        sessionStorage.setItem("kaifogradTeamId", String(id));
+        sessionStorage.setItem(`kaifogradTeamToken:${id}`, tok);
+      }, [team.teamId, team.token]);
+      await page.reload();
+
+      const submit = page.locator('.answer-actions [data-action="submit-answer"]');
+      await page.locator('[data-field="answer-input"]').waitFor({ state: "visible" });
+      assert.equal(await submit.isDisabled(), true);
+      await page.locator('[data-field="answer-input"]').fill("Матрица");
+      assert.equal(await submit.isDisabled(), false);
+      await page.locator('[data-field="answer-input"]').fill("");
+      assert.equal(await submit.isDisabled(), true);
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("a team without a session sees the PIN gate even during the round countdown", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      await loginAndJoin(server.baseUrl, "101", { name: "Игроки", color: "#FF5FA2" });
+      await action(server.baseUrl, { type: "startRound", code: "0306" });
+      await action(server.baseUrl, { type: "finishRound", code: "0306" }); // -> round_countdown (3-2-1)
+      assert.equal((await state(server.baseUrl)).status, "round_countdown");
+
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      await page.goto(`${server.baseUrl}/?view=team&team=2`); // без токена
+      await page.locator('[data-field="team-pin"]').waitFor({ state: "visible" });
+      assert.equal(await page.locator(".countdown-number").count(), 0);
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("a malicious team name is HTML-escaped and does not execute", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      await loginAndJoin(server.baseUrl, "101", { name: "<img src=x onerror=window.__xss=1>", color: "#FF5FA2" });
+      const host = await newPage(browser, server.baseUrl, "/?view=host");
+      await host.evaluate(() => sessionStorage.setItem("kaifogradHostUnlocked", "yes"));
+      await host.reload();
+      await host.waitForTimeout(500);
+      assert.equal(await host.evaluate(() => window.__xss), undefined);
+      assert.equal(await host.evaluate(() => Boolean(document.querySelector('img[src="x"]'))), false);
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("after a host reset the team returns to the PIN gate with a notice and cleared token", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      const team = await loginAndJoin(server.baseUrl, "101", { name: "A", color: "#FF5FA2" });
+      await action(server.baseUrl, { type: "startRound", code: "0306" });
+
+      const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+      await page.goto(`${server.baseUrl}/?view=team&team=1`);
+      await page.evaluate(([id, tok]) => {
+        sessionStorage.setItem("kaifogradTeamId", String(id));
+        sessionStorage.setItem(`kaifogradTeamToken:${id}`, tok);
+      }, [team.teamId, team.token]);
+      await page.reload();
+      await page.locator(".options .option").first().waitFor({ state: "visible" });
+
+      await action(server.baseUrl, { type: "reset", code: "0306" });
+
+      await page.locator('[data-field="team-pin"]').waitFor({ state: "visible" });
+      await page.getByText("Игра перезапущена", { exact: false }).waitFor({ state: "visible" });
+      assert.equal(await page.evaluate(() => sessionStorage.getItem("kaifogradTeamToken:1")), null);
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
+test("the host gate unlocks with the correct code and rejects a wrong one", async () => {
+  const server = await startTestServer();
+  try {
+    await withBrowser(async (browser) => {
+      const page = await newPage(browser, server.baseUrl, "/?view=host");
+      await page.locator("[data-field='host-code']").fill("9999");
+      await page.locator("[data-action='unlock-host']").click();
+      await page.getByText("Неверный код ведущей", { exact: false }).waitFor({ state: "visible" });
+      await page.locator("[data-field='host-code']").fill("0306");
+      await page.locator("[data-action='unlock-host']").click();
+      await page.locator("[data-action='start-round']").waitFor({ state: "visible" });
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
 async function assertVisibleText(page, text) {
   await page.getByText(text, { exact: false }).waitFor({ state: "visible" });
 }

@@ -449,6 +449,26 @@ test("manual island round winner can be awarded by team PIN", async () => {
   }
 });
 
+test("manual attempt timer can be started per team and reset back to idle", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "Первые", color: "#FF5FA2" });
+    for (let i = 0; i < 3; i += 1) await action(server.baseUrl, { type: "nextRound", code: "0306" });
+
+    await action(server.baseUrl, { type: "startManualAttempt", code: "0306", teamId: 1 });
+    let game = await state(server.baseUrl);
+    assert.equal(game.manualAttempt.status, "running");
+    assert.equal(game.manualAttempt.teamId, 1);
+
+    await action(server.baseUrl, { type: "resetManualAttempt", code: "0306" });
+    game = await state(server.baseUrl);
+    assert.equal(game.manualAttempt.status, "idle");
+    assert.equal(game.manualAttempt.teamId, null);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("final reveal reaches podium after the last round", async () => {
   const server = await startTestServer();
   try {
@@ -465,6 +485,235 @@ test("final reveal reaches podium after the last round", async () => {
 
     game = await waitForState(server.baseUrl, (next) => next.finalReveal === "podium");
     assert.equal(game.finalReveal, "podium");
+  } finally {
+    await server.stop();
+  }
+});
+
+test("host view without the correct code gets a redacted state without answers", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "T", color: "#FF5FA2" });
+    const q = (game) => game.rounds[0].questions[0];
+    assert.equal("correct" in q(await state(server.baseUrl, "view=host&code=9999")), false);
+    assert.equal("correct" in q(await state(server.baseUrl, "view=host")), false);
+    assert.equal("correct" in q(await state(server.baseUrl, "view=host&code=0306")), true);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("a privileged action without the host code is rejected and does not mutate", async () => {
+  const server = await startTestServer();
+  try {
+    const res = await actionMayFail(server.baseUrl, { type: "startRound" });
+    assert.equal(res.ok, false);
+    assert.match(res.body.error, /Только для ведущей/i);
+    assert.equal((await state(server.baseUrl)).status, "lobby");
+  } finally {
+    await server.stop();
+  }
+});
+
+test("adjustScore with an unknown team is handled and does not crash the server", async () => {
+  const server = await startTestServer();
+  try {
+    const res = await actionMayFail(server.baseUrl, { type: "adjustScore", code: "0306", teamId: 99, delta: 1 });
+    assert.equal(res.ok, false);
+    assert.equal(res.status, 400);
+    // Сервер жив: следующий запрос отвечает и процесс не упал.
+    assert.equal((await state(server.baseUrl)).status, "lobby");
+    assert.equal(server.child.exitCode, null);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("the static handler blocks path traversal outside the web root", async () => {
+  const server = await startTestServer();
+  try {
+    assert.equal((await fetch(`${server.baseUrl}/%2e%2e%2fserver.js`)).status, 404);
+    assert.equal((await fetch(`${server.baseUrl}/%2e%2e%2f%2e%2e%2fpackage.json`)).status, 404);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("submitAnswer with a wrong token is rejected as a device conflict", async () => {
+  const server = await startTestServer();
+  try {
+    const team = await loginAndJoin(server.baseUrl, "101", { name: "T", color: "#FF5FA2" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+    const bad = await actionMayFail(server.baseUrl, { type: "submitAnswer", teamId: 1, token: "garbage", value: "B" });
+    assert.equal(bad.ok, false);
+    assert.match(bad.body.error, /уже занята на другом устройстве/i);
+    const good = await actionMayFail(server.baseUrl, { type: "submitAnswer", teamId: 1, token: team.token, value: "B", roundIndex: 0, questionIndex: 0 });
+    assert.equal(good.ok, true);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("join without a valid team token is rejected", async () => {
+  const server = await startTestServer();
+  try {
+    const res = await actionMayFail(server.baseUrl, { type: "join", teamId: 1, token: "", name: "X", color: "#FF5FA2" });
+    assert.equal(res.ok, false);
+    assert.match(res.body.error, /Сначала войдите по PIN/i);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("loginTeam is idempotent and returns the same token on re-login", async () => {
+  const server = await startTestServer();
+  try {
+    const a = await action(server.baseUrl, { type: "loginTeam", pin: "101" });
+    const b = await action(server.baseUrl, { type: "loginTeam", pin: "101" });
+    assert.equal(a.token, b.token);
+    assert.equal(a.teamId, b.teamId);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("registering a color already held by a ready team is rejected", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "A", color: "#FF5FA2" });
+    const second = await action(server.baseUrl, { type: "loginTeam", pin: "102" });
+    const res = await actionMayFail(server.baseUrl, { type: "join", teamId: second.teamId, token: second.token, name: "B", color: "#FF5FA2" });
+    assert.equal(res.ok, false);
+    assert.match(res.body.error, /Color already taken/i);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("reassigning the manual winner moves the point from the previous team", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "A", color: "#FF5FA2" });
+    await loginAndJoin(server.baseUrl, "102", { name: "B", color: "#4CC9F0" });
+    for (let i = 0; i < 3; i += 1) await action(server.baseUrl, { type: "nextRound", code: "0306" });
+    await action(server.baseUrl, { type: "awardManualWinnerByPin", code: "0306", pin: "102" });
+    await action(server.baseUrl, { type: "awardManualWinnerByPin", code: "0306", pin: "101" });
+    const game = await state(server.baseUrl);
+    assert.equal(game.teams[1].totalScore, 0);
+    assert.equal(game.teams[0].totalScore, 1);
+    assert.equal(game.manualWinnerTeamId, 1);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("song round scores an artist/title answer end to end", async () => {
+  const server = await startTestServer();
+  try {
+    const team = await loginAndJoin(server.baseUrl, "101", { name: "A", color: "#FF5FA2" });
+    for (let i = 0; i < 6; i += 1) await action(server.baseUrl, { type: "nextRound", code: "0306" });
+    let game = await state(server.baseUrl);
+    assert.equal(game.rounds[game.currentRoundIndex].title, "Угадай песню");
+    await action(server.baseUrl, {
+      type: "submitAnswer",
+      teamId: 1,
+      token: team.token,
+      value: { artist: "Pixies", title: "Where is my mind" },
+      roundIndex: 6,
+      questionIndex: 0,
+    });
+    await action(server.baseUrl, { type: "scoreNow", code: "0306" });
+    game = await state(server.baseUrl);
+    assert.equal(game.teams[0].totalScore, 2);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("togglePause freezes the timer and resume keeps the round running", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "A", color: "#FF5FA2" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+    await action(server.baseUrl, { type: "togglePause", code: "0306" });
+    let game = await state(server.baseUrl);
+    assert.equal(game.paused, true);
+    assert.equal(typeof game.pausedRemainingMs, "number");
+    await action(server.baseUrl, { type: "togglePause", code: "0306" });
+    game = await state(server.baseUrl);
+    assert.equal(game.paused, false);
+    assert.equal(game.status, "round_running");
+  } finally {
+    await server.stop();
+  }
+});
+
+test("/api/action rejects a non-POST request and malformed JSON", async () => {
+  const server = await startTestServer();
+  try {
+    assert.equal((await fetch(`${server.baseUrl}/api/action`)).status, 405);
+    const bad = await fetch(`${server.baseUrl}/api/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{not json",
+    });
+    assert.equal(bad.status, 400);
+    assert.match((await bad.json()).error, /JSON/i);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("a corrupt persisted state boots a fresh lobby game", async () => {
+  const server = await startTestServer({ initialState: { status: "round_running", teams: "not-an-array" } });
+  try {
+    const game = await state(server.baseUrl);
+    assert.equal(game.status, "lobby");
+    assert.equal(Array.isArray(game.teams), true);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("manual attempt can be paused, resumed, finished, and is guarded outside the manual round", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "A", color: "#FF5FA2" });
+    const guard = await actionMayFail(server.baseUrl, { type: "startManualAttempt", code: "0306", teamId: 1 });
+    assert.equal(guard.ok, false);
+    assert.match(guard.body.error, /только в ручном раунде/i);
+
+    for (let i = 0; i < 3; i += 1) await action(server.baseUrl, { type: "nextRound", code: "0306" });
+    await action(server.baseUrl, { type: "startManualAttempt", code: "0306", teamId: 1 });
+    let game = await state(server.baseUrl);
+    assert.equal(game.manualAttempt.status, "running");
+    assert.equal(game.manualAttempt.attemptNumber, 1);
+
+    await action(server.baseUrl, { type: "toggleManualAttemptPause", code: "0306" });
+    assert.equal((await state(server.baseUrl)).manualAttempt.status, "paused");
+    await action(server.baseUrl, { type: "toggleManualAttemptPause", code: "0306" });
+    assert.equal((await state(server.baseUrl)).manualAttempt.status, "running");
+
+    await action(server.baseUrl, { type: "finishManualAttempt", code: "0306" });
+    game = await state(server.baseUrl);
+    assert.equal(game.manualAttempt.status, "finished");
+    assert.equal(game.manualAttempt.remainingMs, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("nextQuestion in the manual round and hideRoundResults outside results are rejected", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "A", color: "#FF5FA2" });
+    for (let i = 0; i < 3; i += 1) await action(server.baseUrl, { type: "nextRound", code: "0306" });
+    const nq = await actionMayFail(server.baseUrl, { type: "nextQuestion", code: "0306" });
+    assert.equal(nq.ok, false);
+    assert.match(nq.body.error, /нет следующего вопроса/i);
+    const hide = await actionMayFail(server.baseUrl, { type: "hideRoundResults", code: "0306" });
+    assert.equal(hide.ok, false);
+    assert.match(hide.body.error, /Итоги сейчас не показаны/i);
   } finally {
     await server.stop();
   }
