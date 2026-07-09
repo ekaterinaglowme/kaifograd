@@ -62,6 +62,23 @@ test("countdown cat overlay appears near the end and never blocks tapping", asyn
   assert.match(catCss, /pointer-events:\s*none/);
 });
 
+test("results cat shows on round results and both cat images exist as transparent PNGs", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+
+  // Кот-сердечко рендерится на итогах раунда у наблюдателя (в шапке «Общий счёт»).
+  const screenStart = source.indexOf("function renderScreen()");
+  const screenEnd = source.indexOf("function renderProjectorTimer", screenStart);
+  assert.match(source.slice(screenStart, screenEnd), /renderResultsCat\(\)/);
+  assert.match(source, /results-cat\.png/);
+  assert.ok(styles.includes(".results-cat"), "стиль results-cat есть");
+
+  // Обе картинки котов реально лежат в assets (ловит «ссылка есть, файла нет»).
+  const { existsSync } = await import("node:fs");
+  assert.equal(existsSync(new URL("../assets/countdown-cat.png", import.meta.url)), true);
+  assert.equal(existsSync(new URL("../assets/results-cat.png", import.meta.url)), true);
+});
+
 test("round countdown lays the cat out on the left and the countdown text on the right", async () => {
   const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
   const start = source.indexOf("function renderRoundCountdown()");
