@@ -46,6 +46,22 @@ test("observer screen contains quiz and reveal content, not host controls", asyn
   assert.doesNotMatch(renderScreenSource, /data-action="adjust-score"/);
 });
 
+test("countdown cat overlay appears near the end and never blocks tapping", async () => {
+  const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../styles.css", import.meta.url), "utf8");
+
+  // Кот подвешен и в экране команды (renderTeamQuestion), и у наблюдателя (renderScreen).
+  const teamStart = source.indexOf("function renderTeamQuestion");
+  const teamEnd = source.indexOf("function teamStatusLabel", teamStart);
+  assert.match(source.slice(teamStart, teamEnd), /renderCountdownCat\(\)/);
+  assert.match(source, /data-countdown-cat/);
+  // Появляется за 5 секунд до конца ответа.
+  assert.match(source, /left <= 5000/);
+  // Оверлей не перехватывает нажатия — иначе мешал бы отвечать.
+  const catCss = styles.slice(styles.indexOf(".countdown-cat-overlay"));
+  assert.match(catCss, /pointer-events:\s*none/);
+});
+
 test("round countdown lays the cat out on the left and the countdown text on the right", async () => {
   const source = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
   const start = source.indexOf("function renderRoundCountdown()");

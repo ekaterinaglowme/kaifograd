@@ -379,6 +379,28 @@ function updateLiveTimers() {
   setLiveText('[data-live="manual-attempt-status"]', manualAttemptStatusText());
   if (currentTeam) setLiveText('[data-live="team-activity-status"]', teamActivityStatusText(currentTeam));
   updateRunawayButtons();
+  updateCountdownCat();
+}
+
+// За 5 секунд до конца ответа показываем кота-«время вышло» и плавно его увеличиваем.
+// Оверлей fixed в углу с pointer-events:none — никогда не мешает нажимать на ответы.
+function updateCountdownCat() {
+  const el = document.querySelector("[data-countdown-cat]");
+  if (!el) return;
+  const active = Boolean(game) && game.status === "round_running" && !game.paused && !isManualRound();
+  const left = active ? questionTimeLeftMs() : Infinity;
+  if (active && left <= 5000) {
+    const progress = Math.min(1, Math.max(0, (5000 - left) / 5000)); // 0 при 5 сек → 1 в конце
+    el.style.transform = `scale(${(0.5 + progress * 0.9).toFixed(3)})`;
+    el.classList.add("is-visible");
+  } else {
+    el.classList.remove("is-visible");
+    el.style.transform = "";
+  }
+}
+
+function renderCountdownCat() {
+  return `<img class="countdown-cat-overlay" data-countdown-cat src="assets/countdown-cat.png" alt="" aria-hidden="true" onerror="this.remove()" />`;
 }
 
 function updateRunawayButtons() {
@@ -899,6 +921,7 @@ function renderTeamQuestion(team) {
         ${renderTeamNotice()}
         <div class="question ${split ? "question-split" : ""} ${isFilmRound() ? "film-question" : ""}">${inner}</div>
       </div>
+      ${renderCountdownCat()}
     </section>
   `;
 }
@@ -1045,6 +1068,7 @@ function renderScreen() {
           ${split ? `<div class="question-media-side">${renderQuestionMedia(q)}</div><div class="question-body-side">${content}</div>` : content}
         </div>
       </div>
+      ${renderCountdownCat()}
     </section>
   `;
 }
@@ -1287,13 +1311,13 @@ function renderRoundResults() {
   `;
 }
 
-// Правильные ответы прошедшего раунда — показываем на итогах для раундов с revealAnswers
-// (мемы и песни). Данные приходят от сервера в round_results (serializeForViewer).
+// Правильные ответы прошедшего раунда — показываем на итогах КАЖДОГО раунда.
+// Данные приходят от сервера в round_results отдельным полем reveals (уже склеены в q).
 function renderRoundAnswers() {
   const result = game.roundResults[game.roundResults.length - 1];
   if (!result) return "";
   const round = game.rounds?.[result.roundIndex];
-  if (!round?.revealAnswers) return "";
+  if (!round) return "";
   const items = (round.questions || [])
     .map((q, index) => {
       const answer = q.type === "song" ? [q.artist, q.title].filter(Boolean).join(" — ") : q.answerTitle || q.answer || "";

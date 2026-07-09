@@ -14,6 +14,13 @@ test("warmup round is text-only without meme images", () => {
   );
 });
 
+test("warmup 'scariest sound' question offers Битрикс instead of Slack", () => {
+  const question = fullRounds[0].questions.find((q) => q.prompt === "Какой самый страшный звук для айтишника?");
+  assert.ok(question, "вопрос про страшный звук на месте");
+  assert.deepEqual(question.options, ["Teams звонок", "«Есть минутка?»", "Будильник", "Битрикс уведомление"]);
+  assert.equal(question.correct, "B");
+});
+
 test("film round uses blurred questions and original answer slides in order", () => {
   const filmRound = fullRounds[2];
   const titles = [

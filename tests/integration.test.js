@@ -596,6 +596,26 @@ test("a long team name coming through the API is capped to 150 characters", asyn
   }
 });
 
+// Сценарий: обычный раунд (разминка, вопросы на выбор) доигран до итогов. Наблюдатель на
+// итогах видит правильные ответы этого раунда — читаемой строкой, без «правильного» ключа.
+test("on results the observer sees the finished plain round's correct answers", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "Итоги", color: "#FF5FA2" });
+    await action(server.baseUrl, { type: "startRound", code: "0306" });
+    for (let i = 0; i < 7; i += 1) await action(server.baseUrl, { type: "nextQuestion", code: "0306" }); // → round_over
+    assert.equal((await state(server.baseUrl)).status, "round_over");
+    await action(server.baseUrl, { type: "finishRound", code: "0306" });
+
+    const game = await waitForState(server.baseUrl, (g) => g.status === "round_results", { query: "view=screen" });
+    assert.ok(game.reveals["0:0"], "у первого вопроса есть правильный ответ");
+    assert.match(game.reveals["0:0"].answer, /^B\. /);
+    assert.doesNotMatch(JSON.stringify(game.reveals), /"correct"|"acceptedAnswers"/);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("the static handler blocks path traversal outside the web root", async () => {
   const server = await startTestServer();
   try {
