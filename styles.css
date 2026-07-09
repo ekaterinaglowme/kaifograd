@@ -818,12 +818,29 @@ button:disabled {
   opacity: 0;
   pointer-events: none;
   z-index: 45;
+  /* кот вырезан (прозрачный фон) — мягкая тень по контуру, без прямоугольной рамки */
+  filter: drop-shadow(0 8px 16px rgba(32, 32, 37, 0.22));
   transition: transform 0.5s linear, opacity 0.4s ease;
   will-change: transform, opacity;
 }
 
 .countdown-cat-overlay.is-visible {
   opacity: 1;
+}
+
+/* Кот-сердечко на итогах раунда: в шапке справа, не перекрывает счёт и ответы. */
+.results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.results-cat {
+  width: clamp(84px, 11vw, 150px);
+  height: auto;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 8px 16px rgba(32, 32, 37, 0.2));
 }
 
 .lobby-office {

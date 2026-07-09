@@ -403,6 +403,11 @@ function renderCountdownCat() {
   return `<img class="countdown-cat-overlay" data-countdown-cat src="assets/countdown-cat.png" alt="" aria-hidden="true" onerror="this.remove()" />`;
 }
 
+// Кот-сердечко на подведении итогов раунда — в шапке рядом с «Общий счёт».
+function renderResultsCat() {
+  return `<img class="results-cat" src="assets/results-cat.png" alt="" aria-hidden="true" onerror="this.remove()" />`;
+}
+
 function updateRunawayButtons() {
   for (const button of document.querySelectorAll("[data-runaway-answer]")) {
     const letter = button.dataset.runawayAnswer;
@@ -1010,7 +1015,7 @@ function renderScreen() {
     return html`
       <section class="projector-screen">
         <div class="panel projector-panel">
-          <div class="panel-title"><h2>Общий счёт</h2></div>
+          <div class="panel-title results-head"><h2>Общий счёт</h2>${renderResultsCat()}</div>
           ${renderBarChart(false)}
           ${renderRoundAnswers()}
         </div>
