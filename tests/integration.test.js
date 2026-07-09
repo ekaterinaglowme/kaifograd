@@ -469,6 +469,96 @@ test("manual attempt timer can be started per team and reset back to idle", asyn
   }
 });
 
+// Сценарий: «генеральная репетиция в миниатюре» — две команды честно проходят все
+// 8 раундов, как на завтрашнем ивенте. Команда 1 в каждом раунде отвечает правильно
+// (в ручном раунде её награждает ведущая), команда 2 — мимо. Проверяем сквозную
+// механику: очки копятся, каждый раунд закрывается с верным победителем, ресурсы
+// города достаются победителю, финал доходит до подиума с правильным итогом.
+test("a full game: two teams play all eight rounds and the winner takes the podium", async () => {
+  const server = await startTestServer();
+  try {
+    const team1 = await loginAndJoin(server.baseUrl, "101", { name: "Чемпионы", color: "#FF5FA2" });
+    const team2 = await loginAndJoin(server.baseUrl, "102", { name: "Соперники", color: "#4CC9F0" });
+
+    // Правильный ответ на ПЕРВЫЙ вопрос каждого раунда (по src/rounds.js).
+    const correctByRound = {
+      0: "B",                                             // Разминка: choice
+      1: "A",                                             // Цена вопроса: choice
+      2: "Отель Гранд Будапешт",                          // Угадай фильм: text
+      4: "1984",                                          // Культурный сервер: text
+      5: "чипи чипи чапа чапа",                           // Озвучь мем: text
+      6: { artist: "Pixies", title: "Where Is My Mind?" }, // Угадай песню: song (+2)
+      7: "Троянский конь",                                // Баг в истории: text
+    };
+
+    let expectedScore = 0;
+    for (let round = 0; round < 8; round += 1) {
+      await action(server.baseUrl, round === 0 ? { type: "startRound", code: "0306" } : { type: "nextRound", code: "0306" });
+
+      if (round === 3) {
+        // Ручной раунд «Кайфуй и работай»: победителя называет ведущая по PIN команды.
+        await action(server.baseUrl, { type: "awardManualWinnerByPin", code: "0306", pin: "101" });
+        expectedScore += 1;
+        await action(server.baseUrl, { type: "closeManualRound", code: "0306" });
+      } else {
+        const right = correctByRound[round];
+        const wrong = typeof right === "string" ? "заведомо мимо" : { artist: "мимо", title: "мимо" };
+        await action(server.baseUrl, { type: "submitAnswer", teamId: 1, token: team1.token, value: right, roundIndex: round, questionIndex: 0 });
+        await action(server.baseUrl, { type: "submitAnswer", teamId: 2, token: team2.token, value: wrong, roundIndex: round, questionIndex: 0 });
+        await action(server.baseUrl, { type: "scoreNow", code: "0306" });
+        expectedScore += round === 6 ? 2 : 1; // песня даёт +1 за исполнителя и +1 за название
+        await action(server.baseUrl, { type: "finishRound", code: "0306" });
+      }
+
+      const results = await waitForState(server.baseUrl, (g) => g.status === "round_results" && g.roundResults.length === round + 1);
+      const last = results.roundResults.at(-1);
+      assert.equal(last.roundIndex, round);
+      assert.deepEqual(last.winners.map((w) => w.teamId), [1], `раунд ${round + 1}: победила команда 1`);
+      assert.equal(results.teams[0].totalScore, expectedScore, `раунд ${round + 1}: общий счёт копится`);
+    }
+
+    // Все 8 ресурсов города достались победителю, у соперников — ноль очков.
+    let game = await state(server.baseUrl);
+    assert.equal(game.cityResources.filter((r) => r.teamId === 1).length, 8);
+    assert.equal(game.teams[1].totalScore, 0);
+
+    // Финал: 3-2-1 и подиум; итоговый счёт чемпионов не изменился.
+    await action(server.baseUrl, { type: "finalReveal", code: "0306" });
+    game = await waitForState(server.baseUrl, (g) => g.finalReveal === "podium");
+    assert.equal(game.teams[0].totalScore, expectedScore);
+  } finally {
+    await server.stop();
+  }
+});
+
+// Сценарий: вторая команда пытается взять уже занятый цвет — сервер отвечает понятной
+// ошибкой, а не молча перекрашивает.
+test("joining with an already taken color is rejected through the API", async () => {
+  const server = await startTestServer();
+  try {
+    await loginAndJoin(server.baseUrl, "101", { name: "Первые", color: "#FF5FA2" });
+    const login2 = await action(server.baseUrl, { type: "loginTeam", pin: "102" });
+    const taken = await actionMayFail(server.baseUrl, {
+      type: "join",
+      teamId: 2,
+      token: login2.token,
+      name: "Вторые",
+      color: "#FF5FA2",
+      captain: "Команда",
+    });
+    assert.equal(taken.ok, false);
+    assert.match(taken.body.error, /Color already taken/i);
+
+    // Со свободным цветом та же команда заходит без проблем.
+    await action(server.baseUrl, { type: "join", teamId: 2, token: login2.token, name: "Вторые", color: "#4CC9F0", captain: "Команда" });
+    const game = await state(server.baseUrl);
+    assert.equal(game.teams[1].ready, true);
+    assert.equal(game.teams[1].color, "#4CC9F0");
+  } finally {
+    await server.stop();
+  }
+});
+
 test("final reveal reaches podium after the last round", async () => {
   const server = await startTestServer();
   try {
